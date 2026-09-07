@@ -95,7 +95,7 @@ async def ready() -> dict[str, Any]:
         pool = await get_pool()
         async with pool.acquire() as conn:
             await conn.fetchval("SELECT 1")
-        return {"database": "ok"}
+        return {"database": "ok", "database url": DATABASE_URL}
     except HTTPException as exc:
         return {"database": "unavailable", "detail": exc.detail}
 

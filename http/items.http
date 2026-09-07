@@ -1,0 +1,10 @@
+### Create item
+POST https://ca-demo-dev.lemondune-260b85b5.swedencentral.azurecontainerapps.io/items
+
+{
+    "title": "My item",
+    "note": "This item rules"
+}
+
+### Get items
+GET https://ca-demo-dev.lemondune-260b85b5.swedencentral.azurecontainerapps.io/items

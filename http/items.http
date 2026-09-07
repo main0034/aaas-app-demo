@@ -2,9 +2,13 @@
 POST https://ca-demo-dev.lemondune-260b85b5.swedencentral.azurecontainerapps.io/items
 
 {
-    "title": "My item",
-    "note": "This item rules"
+    "title": "My item 2",
+    "note": "This item rules more"
 }
 
 ### Get items
 GET https://ca-demo-dev.lemondune-260b85b5.swedencentral.azurecontainerapps.io/items
+
+
+### Ready
+GET https://ca-demo-dev.lemondune-260b85b5.swedencentral.azurecontainerapps.io/ready

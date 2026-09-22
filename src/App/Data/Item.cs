@@ -13,4 +13,7 @@ public sealed class Item
 
     [MaxLength(2000)]
     public string? Note { get; set; }
+
+    [Range(1, 5)]
+    public int? Priority { get; set; }
 }

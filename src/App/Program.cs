@@ -96,7 +96,7 @@ app.MapGet("/items", async (AppDbContext ctx, CancellationToken ct) =>
 
 app.MapPost("/items", async (ItemIn input, AppDbContext ctx, CancellationToken ct) =>
 {
-    var item = new Item { Title = input.Title, Note = input.Note };
+    var item = new Item { Title = input.Title, Note = input.Note, Priority = input.Priority };
     ctx.Items.Add(item);
     await ctx.SaveChangesAsync(ct);
     return Results.Created($"/items/{item.Id}", item);
@@ -107,7 +107,8 @@ return 0;
 
 public sealed record ItemIn(
     [property: Required, StringLength(200, MinimumLength = 1)] string Title,
-    [property: StringLength(2000)] string? Note);
+    [property: StringLength(2000)] string? Note,
+    [property: Range(1, 5)] int? Priority = null);
 
 // Exposes Program to WebApplicationFactory in the tests.
 public partial class Program;

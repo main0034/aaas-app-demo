@@ -91,8 +91,15 @@ app.MapGet("/ready", async (Database db, IServiceProvider sp, CancellationToken 
     }
 });
 
-app.MapGet("/items", async (AppDbContext ctx, CancellationToken ct) =>
-    await ctx.Items.AsNoTracking().OrderByDescending(i => i.Id).Take(100).ToListAsync(ct));
+app.MapGet("/items", async (bool? open, AppDbContext ctx, CancellationToken ct) =>
+{
+    var query = ctx.Items.AsNoTracking().OrderByDescending(i => i.Id).Take(100);
+    if (open == true)
+    {
+        query = query.Where(i => !i.IsDone);
+    }
+    return await query.ToListAsync(ct);
+});
 
 app.MapPost("/items", async (ItemIn input, AppDbContext ctx, CancellationToken ct) =>
 {
@@ -102,6 +109,29 @@ app.MapPost("/items", async (ItemIn input, AppDbContext ctx, CancellationToken c
     return Results.Created($"/items/{item.Id}", item);
 });
 
+app.MapPatch("/items/{id:int}", async (int id, ItemPatchIn input, AppDbContext ctx, CancellationToken ct) =>
+{
+    var item = await ctx.Items.FindAsync([id], ct);
+    if (item is null)
+    {
+        return Results.NotFound();
+    }
+
+    if (input.Done!.Value && !item.IsDone)
+    {
+        item.IsDone = true;
+        item.DoneAt = DateTimeOffset.UtcNow;
+    }
+    else if (!input.Done.Value)
+    {
+        item.IsDone = false;
+        item.DoneAt = null;
+    }
+
+    await ctx.SaveChangesAsync(ct);
+    return Results.Ok(item);
+});
+
 await app.RunAsync();
 return 0;
 
@@ -109,6 +139,8 @@ public sealed record ItemIn(
     [property: Required, StringLength(200, MinimumLength = 1)] string Title,
     [property: StringLength(2000)] string? Note,
     [property: Range(1, 5)] int? Priority = null);
+
+public sealed record ItemPatchIn([property: Required] bool? Done);
 
 // Exposes Program to WebApplicationFactory in the tests.
 public partial class Program;

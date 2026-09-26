@@ -16,4 +16,8 @@ public sealed class Item
 
     [Range(1, 5)]
     public int? Priority { get; set; }
+
+    public bool IsDone { get; set; }
+
+    public DateTimeOffset? DoneAt { get; set; }
 }

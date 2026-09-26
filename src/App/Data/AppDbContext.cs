@@ -20,6 +20,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(i => i.Title).HasColumnName("title");
             e.Property(i => i.Note).HasColumnName("note");
             e.Property(i => i.Priority).HasColumnName("priority");
+            e.Property(i => i.IsDone).HasColumnName("is_done");
+            e.Property(i => i.DoneAt).HasColumnName("done_at");
             e.HasIndex(i => i.Title).IsUnique();
         });
     }

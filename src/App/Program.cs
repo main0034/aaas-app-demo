@@ -93,12 +93,12 @@ app.MapGet("/ready", async (Database db, IServiceProvider sp, CancellationToken 
 
 app.MapGet("/items", async (bool? open, AppDbContext ctx, CancellationToken ct) =>
 {
-    var query = ctx.Items.AsNoTracking().OrderByDescending(i => i.Id).Take(100);
+    IQueryable<Item> query = ctx.Items.AsNoTracking();
     if (open == true)
     {
-        query = query.Where(i => !i.IsDone);
+        query = query.WhereOpen();
     }
-    return await query.ToListAsync(ct);
+    return await query.OrderByDescending(i => i.Id).Take(100).ToListAsync(ct);
 });
 
 app.MapPost("/items", async (ItemIn input, AppDbContext ctx, CancellationToken ct) =>

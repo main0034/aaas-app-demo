@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Notebook</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      display: flex;
+      height: 100vh;
+      font-family: monospace;
+      background: #f5f5f5;
+      overflow: hidden;
+    }
+
+    /* ── Sheet ── */
+    #sheet {
+      position: relative;
+      flex: 1;
+      overflow: hidden;
+      background: #fff;
+      cursor: crosshair;
+    }
+
+    #draw-canvas {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    /* Text nodes rendered on the sheet */
+    .text-node {
+      position: absolute;
+      font: 16px monospace;
+      white-space: nowrap;
+      line-height: 1.4;
+      user-select: none;
+    }
+    .text-node.item       { color: #222; }
+    .text-node.item.done  { color: #aaa; text-decoration: line-through; }
+    .text-node.question   { color: #0066cc; }
+    .text-node.answer     { color: #267326; font-size: 13px; white-space: pre-wrap; max-width: 420px; }
+    .text-node.ai-error   { color: #cc0000; font-size: 13px; }
+    .text-node.thinking   { color: #888; font-style: italic; }
+    .text-node.recognized { color: #999; font-size: 11px; font-style: italic; }
+
+    /* Live-preview text shown under pending ink */
+    #preview-text {
+      position: absolute;
+      color: #999;
+      font-size: 13px;
+      font-style: italic;
+      pointer-events: none;
+      white-space: nowrap;
+      z-index: 5;
+      display: none;
+    }
+
+    /* Floating input that appears when the user clicks */
+    #text-input {
+      position: absolute;
+      font: 16px monospace;
+      border: none;
+      border-bottom: 1px solid #999;
+      background: transparent;
+      outline: none;
+      min-width: 240px;
+      caret-color: #333;
+      display: none;
+      z-index: 10;
+    }
+
+    /* ── Panel ── */
+    #panel {
+      width: 240px;
+      border-left: 1px solid #ddd;
+      padding: 12px 10px;
+      overflow-y: auto;
+      background: #fafafa;
+      flex-shrink: 0;
+    }
+    #panel h2 {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: #888;
+      margin-bottom: 10px;
+    }
+    .panel-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+      padding: 4px 2px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .panel-item input[type=checkbox] { margin-top: 2px; cursor: pointer; flex-shrink: 0; }
+    .panel-item span { word-break: break-word; }
+    .panel-item.done span { color: #aaa; text-decoration: line-through; }
+
+    #live-preview-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #666;
+      margin-top: 10px;
+      cursor: pointer;
+      user-select: none;
+    }
+    #live-preview-label input { cursor: pointer; }
+
+    #read-btn {
+      display: block;
+      width: 100%;
+      margin-top: 8px;
+      padding: 6px 0;
+      font: 12px monospace;
+      background: #e8f0fe;
+      border: 1px solid #b0c4f8;
+      border-radius: 3px;
+      cursor: pointer;
+      color: #2244aa;
+    }
+    #read-btn:hover { background: #d0e0fc; }
+
+    /* Transient error toast */
+    #toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #fff0f0;
+      border: 1px solid #f99;
+      color: #b00;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-size: 13px;
+      display: none;
+      z-index: 100;
+      max-width: 420px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<div id="sheet">
+  <canvas id="draw-canvas"></canvas>
+  <div id="preview-text"></div>
+  <input id="text-input" type="text" autocomplete="off" spellcheck="false" />
+</div>
+
+<div id="panel">
+  <h2>Items</h2>
+  <div id="item-list"></div>
+  <label id="live-preview-label">
+    <input type="checkbox" id="live-preview-toggle" checked />
+    Live preview
+  </label>
+  <button id="read-btn" type="button">Read handwriting</button>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+// ── Constants ──────────────────────────────────────────────────────────────────
+const DRAW_THRESHOLD  = 5;     // px of movement before a mousedown becomes a stroke
+const LINE_H          = 22;    // approximate line height used when placing answers
+const PENDING_COLOR   = '#1a6ee8'; // blue for unread pending ink
+const INK_COLOR       = '#333';    // black for ordinary / read ink
+const MAX_IMAGE_PX    = 1000;  // scale down if wider than this
+const PADDING         = 16;    // px of whitespace around the bounding box
+const PREVIEW_DELAY_MS = 2000; // idle time before a live preview fires
+
+// ── State ──────────────────────────────────────────────────────────────────────
+let strokes   = [];   // [{id, points:[{x,y},...], readAt}]
+let items     = [];   // server Item objects
+let questions = [];   // server Question objects
+
+// Stroke ids the user dismissed with Escape (session-only; never sent for reading).
+const pendingDismissed = new Set();
+
+// Stroke ids drawn in the current page session. Only these are pending; strokes
+// loaded from the server on page load are rendered as ordinary black ink.
+const sessionStrokeIds = new Set();
+
+// Current in-progress stroke
+let drawing = false;
+let currentPoints = [];
+let startX = 0, startY = 0;
+
+// ── Preview state ──────────────────────────────────────────────────────────────
+let inkVersion     = 0;     // increments whenever pending ink changes
+let previewInFlight = false;
+let previewTimer    = null;
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const sheet            = document.getElementById('sheet');
+const canvas           = document.getElementById('draw-canvas');
+const ctx2d            = canvas.getContext('2d');
+const textInput        = document.getElementById('text-input');
+const itemList         = document.getElementById('item-list');
+const readBtn          = document.getElementById('read-btn');
+const toast            = document.getElementById('toast');
+const livePreviewToggle = document.getElementById('live-preview-toggle');
+const previewTextEl    = document.getElementById('preview-text');
+
+// ── Canvas sizing ─────────────────────────────────────────────────────────────
+function resizeCanvas() {
+  const r = sheet.getBoundingClientRect();
+  canvas.width  = r.width;
+  canvas.height = r.height;
+  redraw();
+}
+new ResizeObserver(resizeCanvas).observe(sheet);
+
+// ── Load state from server ────────────────────────────────────────────────────
+async function loadState() {
+  try {
+    const res = await fetch('/notebook/state');
+    if (!res.ok) return;
+    const data = await res.json();
+    items     = data.items     ?? [];
+    strokes   = data.strokes   ?? [];
+    questions = data.questions ?? [];
+    // sessionStrokeIds is intentionally NOT updated here: strokes from the server
+    // are ordinary drawings and are never treated as pending after a page reload.
+    renderAll();
+  } catch { /* server may be starting */ }
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
+function clearTextNodes() {
+  sheet.querySelectorAll('.text-node').forEach(n => n.remove());
+}
+
+function placeNode(cls, text, x, y) {
+  const el = document.createElement('div');
+  el.className = 'text-node ' + cls;
+  el.textContent = text;
+  el.style.left = x + 'px';
+  el.style.top  = y + 'px';
+  sheet.appendChild(el);
+  return el;
+}
+
+function renderAll() {
+  clearTextNodes();
+  renderItems();
+  renderQuestions();
+  redraw();
+  renderPanel();
+}
+
+function renderItems() {
+  for (const item of items) {
+    if (item.x == null) continue;   // no position — panel only
+    if (item.handwritten) {
+      // Show recognised text in small grey below the ink bounding box.
+      const textY = item.y + (item.height ?? 22) + 4;
+      placeNode('recognized', item.title, item.x, textY);
+    } else {
+      const cls = 'item' + (item.isDone ? ' done' : '');
+      placeNode(cls, item.title, item.x, item.y);
+    }
+  }
+}
+
+function renderQuestions() {
+  for (const q of questions) {
+    if (q.handwritten) {
+      // Show recognised text below the ink bounding box.
+      const textY = q.y + (q.height ?? 22) + 4;
+      placeNode('recognized', q.text, q.x, textY);
+      const answerY = textY + LINE_H;
+      if (q.answer != null) {
+        placeNode('answer', q.answer, q.x, answerY);
+      } else if (q.error != null) {
+        placeNode('ai-error', q.error, q.x, answerY);
+      }
+    } else {
+      placeNode('question', q.text, q.x, q.y);
+      const answerY = q.y + LINE_H;
+      if (q.answer != null) {
+        placeNode('answer', q.answer, q.x, answerY);
+      } else if (q.error != null) {
+        placeNode('ai-error', q.error, q.x, answerY);
+      }
+    }
+  }
+}
+
+// A stroke is pending only if it was drawn in this session AND has not been read.
+function isPending(stroke) {
+  return sessionStrokeIds.has(stroke.id) &&
+         stroke.readAt == null &&
+         !pendingDismissed.has(stroke.id);
+}
+
+function redraw() {
+  ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+  ctx2d.lineWidth = 1.5;
+  ctx2d.lineCap = 'round';
+  ctx2d.lineJoin = 'round';
+
+  for (const s of strokes) {
+    if (!s.points || s.points.length < 2) continue;
+    ctx2d.strokeStyle = isPending(s) ? PENDING_COLOR : INK_COLOR;
+    ctx2d.beginPath();
+    ctx2d.moveTo(s.points[0].x, s.points[0].y);
+    for (let i = 1; i < s.points.length; i++) {
+      ctx2d.lineTo(s.points[i].x, s.points[i].y);
+    }
+    ctx2d.stroke();
+  }
+
+  // In-progress stroke
+  if (drawing && currentPoints.length >= 2) {
+    ctx2d.strokeStyle = INK_COLOR;
+    ctx2d.beginPath();
+    ctx2d.moveTo(currentPoints[0].x, currentPoints[0].y);
+    for (let i = 1; i < currentPoints.length; i++) {
+      ctx2d.lineTo(currentPoints[i].x, currentPoints[i].y);
+    }
+    ctx2d.stroke();
+  }
+}
+
+function renderPanel() {
+  itemList.innerHTML = '';
+  for (const item of items) {
+    const row = document.createElement('div');
+    row.className = 'panel-item' + (item.isDone ? ' done' : '');
+    row.dataset.id = item.id;
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = item.isDone;
+    cb.addEventListener('change', () => toggleItem(item.id, cb.checked));
+
+    const label = document.createElement('span');
+    label.textContent = item.title;
+
+    row.appendChild(cb);
+    row.appendChild(label);
+    itemList.appendChild(row);
+  }
+}
+
+// ── Mouse: draw strokes ────────────────────────────────────────────────────────
+function sheetXY(e) {
+  const r = sheet.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+sheet.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  if (textInput.style.display !== 'none') {
+    // If a text input is open and the user clicks elsewhere, commit or cancel it.
+    textInput.blur();
+  }
+  const pos = sheetXY(e);
+  startX = pos.x; startY = pos.y;
+  drawing = false;
+  currentPoints = [pos];
+});
+
+sheet.addEventListener('mousemove', e => {
+  if (e.buttons !== 1) return;
+  const pos = sheetXY(e);
+  currentPoints.push(pos);
+  const dx = pos.x - startX, dy = pos.y - startY;
+  if (!drawing && Math.sqrt(dx*dx + dy*dy) > DRAW_THRESHOLD) {
+    drawing = true;
+  }
+  if (drawing) redraw();
+});
+
+sheet.addEventListener('mouseup', async e => {
+  if (e.button !== 0) return;
+  const pos = sheetXY(e);
+  currentPoints.push(pos);
+
+  if (drawing) {
+    drawing = false;
+    await submitStroke(currentPoints);
+    currentPoints = [];
+    redraw();
+  } else {
+    // Short click — open text input at this position
+    drawing = false;
+    currentPoints = [];
+    openTextInput(startX, startY);
+  }
+});
+
+// ── Text input ────────────────────────────────────────────────────────────────
+function measureText(text) {
+  const span = document.createElement('span');
+  span.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;font:16px monospace;line-height:1.4';
+  span.textContent = text;
+  document.body.appendChild(span);
+  const w = span.offsetWidth;
+  const h = span.offsetHeight;
+  document.body.removeChild(span);
+  return { width: w || 10, height: h || 22 };
+}
+
+function openTextInput(x, y) {
+  textInput.value = '';
+  textInput.style.left    = x + 'px';
+  textInput.style.top     = y + 'px';
+  textInput.style.display = 'block';
+  textInput.focus();
+}
+
+textInput.addEventListener('keydown', async e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const text = textInput.value;
+    const x = parseFloat(textInput.style.left);
+    const y = parseFloat(textInput.style.top);
+    textInput.style.display = 'none';
+    textInput.value = '';
+    if (text.trim().length === 0) return;
+    await submitLine(text, x, y);
+  } else if (e.key === 'Escape') {
+    textInput.style.display = 'none';
+    textInput.value = '';
+  }
+});
+
+textInput.addEventListener('blur', () => {
+  textInput.style.display = 'none';
+  textInput.value = '';
+});
+
+// ── Keyboard shortcuts (when text input is not open) ─────────────────────────
+document.addEventListener('keydown', e => {
+  if (document.activeElement === textInput) return;
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    readHandwriting();
+  } else if (e.key === 'Escape') {
+    dismissPending();
+  }
+});
+
+// ── Read handwriting ──────────────────────────────────────────────────────────
+readBtn.addEventListener('click', () => readHandwriting());
+
+async function readHandwriting() {
+  const pending = strokes.filter(s => isPending(s));
+  if (pending.length === 0) return;
+
+  // Stop the live preview — we are committing the ink right now.
+  if (previewTimer != null) { clearTimeout(previewTimer); previewTimer = null; }
+  clearPreviewDisplay();
+  inkVersion++;   // discard any in-flight preview response
+
+  // Calculate the bounding box of all pending strokes.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of pending) {
+    for (const p of s.points) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+
+  // Add padding (clamped to canvas bounds).
+  const sheetW = canvas.width;
+  const sheetH = canvas.height;
+  minX = Math.max(0, minX - PADDING);
+  minY = Math.max(0, minY - PADDING);
+  maxX = Math.min(sheetW, maxX + PADDING);
+  maxY = Math.min(sheetH, maxY + PADDING);
+
+  const bboxW = maxX - minX;
+  const bboxH = maxY - minY;
+  if (bboxW <= 0 || bboxH <= 0) return;
+
+  // Scale so the image is at most MAX_IMAGE_PX wide.
+  const scale = bboxW > MAX_IMAGE_PX ? MAX_IMAGE_PX / bboxW : 1;
+  const canvasW = Math.round(bboxW * scale);
+  const canvasH = Math.round(bboxH * scale);
+
+  // Render pending strokes onto an off-screen canvas (black on white).
+  const off = document.createElement('canvas');
+  off.width  = canvasW;
+  off.height = canvasH;
+  const offCtx = off.getContext('2d');
+  offCtx.fillStyle = '#fff';
+  offCtx.fillRect(0, 0, canvasW, canvasH);
+  offCtx.strokeStyle = '#000';
+  offCtx.lineWidth = 1.5;
+  offCtx.lineCap = 'round';
+  offCtx.lineJoin = 'round';
+
+  for (const s of pending) {
+    if (!s.points || s.points.length < 2) continue;
+    offCtx.beginPath();
+    offCtx.moveTo((s.points[0].x - minX) * scale, (s.points[0].y - minY) * scale);
+    for (let i = 1; i < s.points.length; i++) {
+      offCtx.lineTo((s.points[i].x - minX) * scale, (s.points[i].y - minY) * scale);
+    }
+    offCtx.stroke();
+  }
+
+  const dataUrl = off.toDataURL('image/png');
+  const base64  = dataUrl.split(',')[1];
+
+  try {
+    const res = await fetch('/notebook/ink', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        strokeIds:     pending.map(s => s.id),
+        image:         base64,
+        boundingLeft:  minX,
+        boundingTop:   minY,
+        boundingWidth: bboxW,
+        boundingHeight: bboxH,
+      }),
+    });
+
+    if (res.status === 200) {
+      const data = await res.json();
+      if (data.type === 'nothing') {
+        showToast(data.message ?? 'No legible text found.');
+      } else {
+        await loadState();
+      }
+    } else if (res.status === 201) {
+      await loadState();
+    } else {
+      const body = await res.json().catch(() => ({}));
+      showToast(body.detail || body.title || 'Could not read handwriting.');
+    }
+  } catch {
+    showToast('Could not reach the server.');
+  }
+}
+
+// ── Dismiss pending ink ───────────────────────────────────────────────────────
+function dismissPending() {
+  let changed = false;
+  for (const s of strokes) {
+    if (isPending(s)) {
+      pendingDismissed.add(s.id);
+      changed = true;
+    }
+  }
+  if (changed) {
+    redraw();
+    clearPreviewDisplay();
+    if (previewTimer != null) { clearTimeout(previewTimer); previewTimer = null; }
+    inkVersion++;
+  }
+}
+
+// ── API calls ─────────────────────────────────────────────────────────────────
+async function submitLine(text, x, y) {
+  const { width, height } = measureText(text);
+
+  // Show a placeholder while we wait (questions may take a while for AI).
+  const isQuestion = text.trim().endsWith('?') && text.trim() !== '?';
+  let placeholder = null;
+  if (isQuestion) {
+    placeholder = placeNode('thinking', text.trim() + '  (thinking…)', x, y);
+  }
+
+  try {
+    const res = await fetch('/notebook/lines', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, x, y, width, height }),
+    });
+
+    if (placeholder) placeholder.remove();
+
+    if (res.ok || res.status === 201) {
+      const data = await res.json();
+      if (data.type === 'item') {
+        const idx = items.findIndex(i => i.id === data.item.id);
+        if (idx >= 0) items[idx] = data.item; else items.push(data.item);
+      } else if (data.type === 'question') {
+        const idx = questions.findIndex(q => q.id === data.question.id);
+        if (idx >= 0) questions[idx] = data.question; else questions.push(data.question);
+      }
+      renderAll();
+    } else {
+      const body = await res.json().catch(() => ({}));
+      showToast(body.detail || body.title || 'Something went wrong.');
+    }
+  } catch {
+    if (placeholder) placeholder.remove();
+    showToast('Could not reach the server.');
+  }
+}
+
+async function submitStroke(points) {
+  try {
+    const res = await fetch('/notebook/strokes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ points }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    // Track as a session stroke so it is treated as pending (blue).
+    sessionStrokeIds.add(data.strokeId);
+    // Add stroke to local state, carrying the readAt from the server response.
+    strokes.push({ id: data.strokeId, points, readAt: data.readAt ?? null });
+    // If the stroke ticked an item, update the item locally.
+    if (data.isCheckMark && data.itemId != null) {
+      const item = items.find(i => i.id === data.itemId);
+      if (item) {
+        item.isDone = true;
+        renderAll();
+      }
+    }
+    // Ink changed: clear old preview and restart the idle timer.
+    onInkChanged();
+  } catch { /* best effort */ }
+}
+
+async function toggleItem(id, done) {
+  try {
+    const res = await fetch(`/items/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ done }),
+    });
+    if (!res.ok) return;
+    const updated = await res.json();
+    const idx = items.findIndex(i => i.id === id);
+    if (idx >= 0) items[idx] = updated;
+    renderAll();
+  } catch { /* best effort */ }
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+let toastTimer = null;
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.style.display = 'block';
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.style.display = 'none'; }, 4000);
+}
+
+// ── Live preview ──────────────────────────────────────────────────────────────
+
+function livePreviewEnabled() {
+  return livePreviewToggle.checked;
+}
+
+livePreviewToggle.addEventListener('change', () => {
+  if (!livePreviewEnabled()) {
+    if (previewTimer != null) { clearTimeout(previewTimer); previewTimer = null; }
+    clearPreviewDisplay();
+  }
+});
+
+function clearPreviewDisplay() {
+  previewTextEl.style.display = 'none';
+  previewTextEl.textContent = '';
+}
+
+function showPreviewDisplay(text, x, y) {
+  previewTextEl.textContent = text;
+  previewTextEl.style.left  = x + 'px';
+  previewTextEl.style.top   = y + 'px';
+  previewTextEl.style.display = 'block';
+}
+
+// Called whenever the set of pending strokes changes (new stroke, dismiss, read).
+function onInkChanged() {
+  inkVersion++;
+  clearPreviewDisplay();
+  schedulePreview();
+}
+
+function schedulePreview() {
+  if (!livePreviewEnabled()) return;
+  if (previewTimer != null) clearTimeout(previewTimer);
+  previewTimer = setTimeout(runPreview, PREVIEW_DELAY_MS);
+}
+
+// Computes the padded bounding box of pending strokes on the canvas.
+// Returns null when there are no pending strokes.
+function pendingBBox() {
+  const pending = strokes.filter(isPending);
+  if (pending.length === 0) return null;
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of pending) {
+    for (const p of s.points) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+
+  const sheetW = canvas.width, sheetH = canvas.height;
+  return {
+    minX: Math.max(0, minX - PADDING),
+    minY: Math.max(0, minY - PADDING),
+    maxX: Math.min(sheetW, maxX + PADDING),
+    maxY: Math.min(sheetH, maxY + PADDING),
+  };
+}
+
+async function runPreview() {
+  previewTimer = null;
+  if (!livePreviewEnabled()) return;
+
+  const pending = strokes.filter(isPending);
+  if (pending.length === 0) { clearPreviewDisplay(); return; }
+  if (previewInFlight) return;  // completion handler calls runPreview again if ink changed
+
+  const myVersion = inkVersion;
+  previewInFlight = true;
+
+  // Compute bounding box and render pending strokes to a PNG.
+  const bbox = pendingBBox();
+  if (!bbox) { previewInFlight = false; return; }
+
+  const { minX, minY, maxX, maxY } = bbox;
+  const bboxW = maxX - minX, bboxH = maxY - minY;
+  if (bboxW <= 0 || bboxH <= 0) { previewInFlight = false; return; }
+
+  const scale  = bboxW > MAX_IMAGE_PX ? MAX_IMAGE_PX / bboxW : 1;
+  const offW   = Math.round(bboxW * scale);
+  const offH   = Math.round(bboxH * scale);
+  const off    = document.createElement('canvas');
+  off.width = offW; off.height = offH;
+  const oc = off.getContext('2d');
+  oc.fillStyle = '#fff'; oc.fillRect(0, 0, offW, offH);
+  oc.strokeStyle = '#000'; oc.lineWidth = 1.5; oc.lineCap = 'round'; oc.lineJoin = 'round';
+
+  for (const s of pending) {
+    if (!s.points || s.points.length < 2) continue;
+    oc.beginPath();
+    oc.moveTo((s.points[0].x - minX) * scale, (s.points[0].y - minY) * scale);
+    for (let i = 1; i < s.points.length; i++) {
+      oc.lineTo((s.points[i].x - minX) * scale, (s.points[i].y - minY) * scale);
+    }
+    oc.stroke();
+  }
+
+  const base64 = off.toDataURL('image/png').split(',')[1];
+
+  // Show "reading..." under the pending ink bounding box.
+  showPreviewDisplay('reading…', minX, maxY + 4);
+
+  try {
+    const res = await fetch('/notebook/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: base64 }),
+    });
+    previewInFlight = false;
+
+    if (inkVersion !== myVersion) {
+      // Ink changed while the request was in flight; run another preview.
+      clearPreviewDisplay();
+      runPreview();
+      return;
+    }
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.error) {
+        // Reader failure: short grey note, no pop-up.
+        showPreviewDisplay(data.error, minX, maxY + 4);
+      } else if (data.text) {
+        showPreviewDisplay(data.text, minX, maxY + 4);
+      } else {
+        // Nothing legible: show nothing.
+        clearPreviewDisplay();
+      }
+    } else {
+      clearPreviewDisplay();
+    }
+  } catch {
+    previewInFlight = false;
+    clearPreviewDisplay();
+  }
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+loadState();
+</script>
+</body>
+</html>

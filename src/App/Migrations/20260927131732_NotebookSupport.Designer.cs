@@ -3,6 +3,7 @@ using System;
 using App.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace App.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260927131732_NotebookSupport")]
+    partial class NotebookSupport
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -34,12 +37,6 @@ namespace App.Migrations
                     b.Property<DateTimeOffset?>("DoneAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("done_at");
-
-                    b.Property<bool>("Handwritten")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false)
-                        .HasColumnName("handwritten");
 
                     b.Property<double?>("Height")
                         .HasColumnType("double precision")
@@ -110,25 +107,11 @@ namespace App.Migrations
                         .HasColumnType("character varying(500)")
                         .HasColumnName("error");
 
-                    b.Property<bool>("Handwritten")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false)
-                        .HasColumnName("handwritten");
-
-                    b.Property<double?>("Height")
-                        .HasColumnType("double precision")
-                        .HasColumnName("height");
-
                     b.Property<string>("Text")
                         .IsRequired()
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)")
                         .HasColumnName("text");
-
-                    b.Property<double?>("Width")
-                        .HasColumnType("double precision")
-                        .HasColumnName("width");
 
                     b.Property<double>("X")
                         .HasColumnType("double precision")
@@ -156,10 +139,6 @@ namespace App.Migrations
                         .IsRequired()
                         .HasColumnType("jsonb")
                         .HasColumnName("points");
-
-                    b.Property<DateTimeOffset?>("ReadAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("read_at");
 
                     b.HasKey("Id");
 

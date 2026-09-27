@@ -14,6 +14,53 @@ Template repository for AaaS-generated applications. ASP.NET Core minimal API on
 - CI: format, build (warnings as errors), tests without a database, model-vs-migration check, immutable and expand-only migration checks, docker build, smoke test, migrations applied twice to a real Postgres
 - Release: image push to GHCR + automatic deployment PR
 
+## Run the notebook locally
+
+The notebook is a local-only experiment that runs on one laptop. The `claude` CLI
+and its login live on the host, so the **app runs on the host** and only Postgres
+and the migrations run in Docker.
+
+**Prerequisites (macOS):** Docker Desktop, the .NET 10 SDK, and `claude`
+installed and logged in (run `claude` once in a terminal).
+
+### From Rider
+
+Open the solution and pick the **Notebook** run configuration (committed in
+`.run/`). Run or Debug it. Before it starts the app it runs
+**Notebook: database + migrations**, which is `scripts/notebook-db.sh`:
+Postgres on `127.0.0.1:5432` (Docker Compose) and a one-shot container that
+applies the migrations with the app's own `migrate` command. If a migration
+fails, the app is not started. The app then starts with the `Notebook (local)`
+launch profile (`src/App/Properties/launchSettings.json`) and opens
+`http://127.0.0.1:8000`.
+
+The first run builds the app image for the migration step and takes a few
+minutes; later runs reuse the cache.
+
+`claude` does not need to be on the IDE's PATH (an app started from the Dock
+does not get your shell's PATH). A bare `claude` is looked up on PATH, then in
+`~/.local/bin`, `~/.claude/local`, `~/.npm-global/bin`, `/opt/homebrew/bin` and
+`/usr/local/bin`. To use another location, set `Assistant__ClaudePath` in the
+launch profile.
+
+### From a terminal
+
+```bash
+./scripts/notebook-db.sh                             # Postgres + migrations
+dotnet run --project src/App --launch-profile "Notebook (local)"
+```
+
+### Notes
+
+- The app listens on `127.0.0.1` only (`BIND_ADDRESS`): anyone who can reach
+  the port can spend your Claude usage.
+- Data lives in the `aaas-notebook_pgdata` volume. `docker compose down -v`
+  deletes it.
+- `PGHOST` must be `localhost`, not `127.0.0.1`: `Database.cs` only skips TLS
+  for a host named `localhost`, and the local Postgres has no certificate.
+- The AI assistant is off unless `Assistant__Enabled=true`, which only the
+  local launch profile sets.
+
 ## Local development
 
 Needs the .NET 10 SDK (`global.json` pins the band).

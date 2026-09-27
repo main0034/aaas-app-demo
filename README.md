@@ -14,6 +14,40 @@ Template repository for AaaS-generated applications. ASP.NET Core minimal API on
 - CI: format, build (warnings as errors), tests without a database, model-vs-migration check, immutable and expand-only migration checks, docker build, smoke test, migrations applied twice to a real Postgres
 - Release: image push to GHCR + automatic deployment PR
 
+## Run the notebook locally
+
+The notebook is a local-only experiment that runs on one laptop. The `claude` CLI
+and its login live on the host machine, so the app must run with `dotnet run`
+rather than inside a container — do not use `docker compose` for this.
+
+**macOS prerequisites:** Docker Desktop (for Postgres) and the .NET 10 SDK.
+
+```bash
+# 1. Start Postgres in Docker
+docker run -d --name pg -e POSTGRES_PASSWORD=dev -p 5432:5432 postgres:16
+
+# 2. Set database environment variables
+export PGHOST=localhost PGDATABASE=postgres PGUSER=postgres PGPASSWORD=dev
+
+# 3. Apply migrations
+dotnet run --project src/App -- migrate
+
+# 4. Run the app, bound to localhost only so only you can reach it
+BIND_ADDRESS=127.0.0.1 Assistant__Enabled=true \
+  dotnet run --project src/App
+```
+
+Then open `http://localhost:8000` in your browser.
+
+`BIND_ADDRESS=127.0.0.1` prevents anyone on your network from reaching the
+notebook and spending your Claude usage. Omit it only if you need access from
+another device on the same network. The default (`0.0.0.0`) is kept so the
+container deployment (which does not use the notebook) continues to work.
+
+The notebook uses your personal `claude` login. Make sure `claude` is on your
+`PATH` and you have run `claude` at least once to authenticate. The AI assistant
+is disabled by default; `Assistant__Enabled=true` turns it on.
+
 ## Local development
 
 Needs the .NET 10 SDK (`global.json` pins the band).

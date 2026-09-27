@@ -1,18 +1,22 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace App.Data;
 
-// The data model. Change it here, then run `dotnet ef migrations add <Name>`.
-// Never change the schema any other way - see AGENT.md.
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
     public DbSet<Item> Items => Set<Item>();
+    public DbSet<Stroke> Strokes => Set<Stroke>();
+    public DbSet<Question> Questions => Set<Question>();
+
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        // snake_case in the database, PascalCase in C#. Explicit rather than a
-        // naming-convention package: one less dependency, and the SQL an agent
-        // reads in a migration matches the table it will see in psql.
         modelBuilder.Entity<Item>(e =>
         {
             e.ToTable("items");
@@ -22,7 +26,38 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(i => i.Priority).HasColumnName("priority");
             e.Property(i => i.IsDone).HasColumnName("is_done");
             e.Property(i => i.DoneAt).HasColumnName("done_at");
+            e.Property(i => i.X).HasColumnName("x");
+            e.Property(i => i.Y).HasColumnName("y");
+            e.Property(i => i.Width).HasColumnName("width");
+            e.Property(i => i.Height).HasColumnName("height");
             e.HasIndex(i => i.Title).IsUnique();
+        });
+
+        var pointsConverter = new ValueConverter<List<StrokePoint>, string>(
+            v => JsonSerializer.Serialize(v, JsonOpts),
+            v => JsonSerializer.Deserialize<List<StrokePoint>>(v, JsonOpts) ?? new List<StrokePoint>());
+
+        modelBuilder.Entity<Stroke>(e =>
+        {
+            e.ToTable("strokes");
+            e.Property(s => s.Id).HasColumnName("id");
+            e.Property(s => s.Points)
+                .HasColumnName("points")
+                .HasColumnType("jsonb")
+                .HasConversion(pointsConverter);
+        });
+
+        modelBuilder.Entity<Question>(e =>
+        {
+            e.ToTable("questions");
+            e.Property(q => q.Id).HasColumnName("id");
+            e.Property(q => q.Text).HasColumnName("text");
+            e.Property(q => q.X).HasColumnName("x");
+            e.Property(q => q.Y).HasColumnName("y");
+            e.Property(q => q.Answer).HasColumnName("answer");
+            e.Property(q => q.Error).HasColumnName("error");
+            e.Property(q => q.AskedAt).HasColumnName("asked_at");
+            e.Property(q => q.AnsweredAt).HasColumnName("answered_at");
         });
     }
 }

@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Notebook</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      display: flex;
+      height: 100vh;
+      font-family: monospace;
+      background: #f5f5f5;
+      overflow: hidden;
+    }
+
+    /* ── Sheet ── */
+    #sheet {
+      position: relative;
+      flex: 1;
+      overflow: hidden;
+      background: #fff;
+      cursor: crosshair;
+    }
+
+    #draw-canvas {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    /* Text nodes rendered on the sheet */
+    .text-node {
+      position: absolute;
+      font: 16px monospace;
+      white-space: nowrap;
+      line-height: 1.4;
+      user-select: none;
+    }
+    .text-node.item       { color: #222; }
+    .text-node.item.done  { color: #aaa; text-decoration: line-through; }
+    .text-node.question   { color: #0066cc; }
+    .text-node.answer     { color: #267326; font-size: 13px; white-space: pre-wrap; max-width: 420px; }
+    .text-node.ai-error   { color: #cc0000; font-size: 13px; }
+    .text-node.thinking   { color: #888; font-style: italic; }
+
+    /* Floating input that appears when the user clicks */
+    #text-input {
+      position: absolute;
+      font: 16px monospace;
+      border: none;
+      border-bottom: 1px solid #999;
+      background: transparent;
+      outline: none;
+      min-width: 240px;
+      caret-color: #333;
+      display: none;
+      z-index: 10;
+    }
+
+    /* ── Panel ── */
+    #panel {
+      width: 240px;
+      border-left: 1px solid #ddd;
+      padding: 12px 10px;
+      overflow-y: auto;
+      background: #fafafa;
+      flex-shrink: 0;
+    }
+    #panel h2 {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: #888;
+      margin-bottom: 10px;
+    }
+    .panel-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+      padding: 4px 2px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .panel-item input[type=checkbox] { margin-top: 2px; cursor: pointer; flex-shrink: 0; }
+    .panel-item span { word-break: break-word; }
+    .panel-item.done span { color: #aaa; text-decoration: line-through; }
+
+    /* Transient error toast */
+    #toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #fff0f0;
+      border: 1px solid #f99;
+      color: #b00;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-size: 13px;
+      display: none;
+      z-index: 100;
+      max-width: 420px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<div id="sheet">
+  <canvas id="draw-canvas"></canvas>
+  <input id="text-input" type="text" autocomplete="off" spellcheck="false" />
+</div>
+
+<div id="panel">
+  <h2>Items</h2>
+  <div id="item-list"></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+// ── Constants ──────────────────────────────────────────────────────────────────
+const DRAW_THRESHOLD = 5;   // px of movement before a mousedown becomes a stroke
+const LINE_H = 22;          // approximate line height used when placing answers
+
+// ── State ──────────────────────────────────────────────────────────────────────
+let strokes = [];           // [{id, points:[{x,y},...]}]
+let items   = [];           // server Item objects
+let questions = [];         // server Question objects
+
+// Current in-progress stroke
+let drawing = false;
+let currentPoints = [];
+let startX = 0, startY = 0;
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const sheet    = document.getElementById('sheet');
+const canvas   = document.getElementById('draw-canvas');
+const ctx2d    = canvas.getContext('2d');
+const textInput = document.getElementById('text-input');
+const itemList  = document.getElementById('item-list');
+const toast     = document.getElementById('toast');
+
+// ── Canvas sizing ─────────────────────────────────────────────────────────────
+function resizeCanvas() {
+  const r = sheet.getBoundingClientRect();
+  canvas.width  = r.width;
+  canvas.height = r.height;
+  redraw();
+}
+new ResizeObserver(resizeCanvas).observe(sheet);
+
+// ── Load state from server ────────────────────────────────────────────────────
+async function loadState() {
+  try {
+    const res = await fetch('/notebook/state');
+    if (!res.ok) return;
+    const data = await res.json();
+    items     = data.items     ?? [];
+    strokes   = data.strokes   ?? [];
+    questions = data.questions ?? [];
+    renderAll();
+  } catch { /* server may be starting */ }
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
+function clearTextNodes() {
+  sheet.querySelectorAll('.text-node').forEach(n => n.remove());
+}
+
+function placeNode(cls, text, x, y) {
+  const el = document.createElement('div');
+  el.className = 'text-node ' + cls;
+  el.textContent = text;
+  el.style.left = x + 'px';
+  el.style.top  = y + 'px';
+  sheet.appendChild(el);
+  return el;
+}
+
+function renderAll() {
+  clearTextNodes();
+  renderItems();
+  renderQuestions();
+  redraw();
+  renderPanel();
+}
+
+function renderItems() {
+  for (const item of items) {
+    if (item.x == null) continue;   // no position — panel only
+    const cls = 'item' + (item.isDone ? ' done' : '');
+    placeNode(cls, item.title, item.x, item.y);
+  }
+}
+
+function renderQuestions() {
+  for (const q of questions) {
+    placeNode('question', q.text, q.x, q.y);
+    const answerY = q.y + LINE_H;
+    if (q.answer != null) {
+      placeNode('answer', q.answer, q.x, answerY);
+    } else if (q.error != null) {
+      placeNode('ai-error', q.error, q.x, answerY);
+    }
+  }
+}
+
+function redraw() {
+  ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+  ctx2d.strokeStyle = '#333';
+  ctx2d.lineWidth = 1.5;
+  ctx2d.lineCap = 'round';
+  ctx2d.lineJoin = 'round';
+
+  for (const s of strokes) {
+    if (!s.points || s.points.length < 2) continue;
+    ctx2d.beginPath();
+    ctx2d.moveTo(s.points[0].x, s.points[0].y);
+    for (let i = 1; i < s.points.length; i++) {
+      ctx2d.lineTo(s.points[i].x, s.points[i].y);
+    }
+    ctx2d.stroke();
+  }
+
+  // In-progress stroke
+  if (drawing && currentPoints.length >= 2) {
+    ctx2d.beginPath();
+    ctx2d.moveTo(currentPoints[0].x, currentPoints[0].y);
+    for (let i = 1; i < currentPoints.length; i++) {
+      ctx2d.lineTo(currentPoints[i].x, currentPoints[i].y);
+    }
+    ctx2d.stroke();
+  }
+}
+
+function renderPanel() {
+  itemList.innerHTML = '';
+  for (const item of items) {
+    const row = document.createElement('div');
+    row.className = 'panel-item' + (item.isDone ? ' done' : '');
+    row.dataset.id = item.id;
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = item.isDone;
+    cb.addEventListener('change', () => toggleItem(item.id, cb.checked));
+
+    const label = document.createElement('span');
+    label.textContent = item.title;
+
+    row.appendChild(cb);
+    row.appendChild(label);
+    itemList.appendChild(row);
+  }
+}
+
+// ── Mouse: draw strokes ────────────────────────────────────────────────────────
+function sheetXY(e) {
+  const r = sheet.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+sheet.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  if (textInput.style.display !== 'none') {
+    // If a text input is open and the user clicks elsewhere, commit or cancel it.
+    textInput.blur();
+  }
+  const pos = sheetXY(e);
+  startX = pos.x; startY = pos.y;
+  drawing = false;
+  currentPoints = [pos];
+});
+
+sheet.addEventListener('mousemove', e => {
+  if (e.buttons !== 1) return;
+  const pos = sheetXY(e);
+  currentPoints.push(pos);
+  const dx = pos.x - startX, dy = pos.y - startY;
+  if (!drawing && Math.sqrt(dx*dx + dy*dy) > DRAW_THRESHOLD) {
+    drawing = true;
+  }
+  if (drawing) redraw();
+});
+
+sheet.addEventListener('mouseup', async e => {
+  if (e.button !== 0) return;
+  const pos = sheetXY(e);
+  currentPoints.push(pos);
+
+  if (drawing) {
+    drawing = false;
+    await submitStroke(currentPoints);
+    currentPoints = [];
+    redraw();
+  } else {
+    // Short click — open text input at this position
+    drawing = false;
+    currentPoints = [];
+    openTextInput(startX, startY);
+  }
+});
+
+// ── Text input ────────────────────────────────────────────────────────────────
+function measureText(text) {
+  const span = document.createElement('span');
+  span.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;font:16px monospace;line-height:1.4';
+  span.textContent = text;
+  document.body.appendChild(span);
+  const w = span.offsetWidth;
+  const h = span.offsetHeight;
+  document.body.removeChild(span);
+  return { width: w || 10, height: h || 22 };
+}
+
+function openTextInput(x, y) {
+  textInput.value = '';
+  textInput.style.left    = x + 'px';
+  textInput.style.top     = y + 'px';
+  textInput.style.display = 'block';
+  textInput.focus();
+}
+
+textInput.addEventListener('keydown', async e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const text = textInput.value;
+    const x = parseFloat(textInput.style.left);
+    const y = parseFloat(textInput.style.top);
+    textInput.style.display = 'none';
+    textInput.value = '';
+    if (text.trim().length === 0) return;
+    await submitLine(text, x, y);
+  } else if (e.key === 'Escape') {
+    textInput.style.display = 'none';
+    textInput.value = '';
+  }
+});
+
+textInput.addEventListener('blur', () => {
+  textInput.style.display = 'none';
+  textInput.value = '';
+});
+
+// ── API calls ─────────────────────────────────────────────────────────────────
+async function submitLine(text, x, y) {
+  const { width, height } = measureText(text);
+
+  // Show a placeholder while we wait (questions may take a while for AI).
+  const isQuestion = text.trim().endsWith('?') && text.trim() !== '?';
+  let placeholder = null;
+  if (isQuestion) {
+    placeholder = placeNode('thinking', text.trim() + '  (thinking…)', x, y);
+  }
+
+  try {
+    const res = await fetch('/notebook/lines', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, x, y, width, height }),
+    });
+
+    if (placeholder) placeholder.remove();
+
+    if (res.ok || res.status === 201) {
+      const data = await res.json();
+      if (data.type === 'item') {
+        const idx = items.findIndex(i => i.id === data.item.id);
+        if (idx >= 0) items[idx] = data.item; else items.push(data.item);
+      } else if (data.type === 'question') {
+        const idx = questions.findIndex(q => q.id === data.question.id);
+        if (idx >= 0) questions[idx] = data.question; else questions.push(data.question);
+      }
+      renderAll();
+    } else {
+      const body = await res.json().catch(() => ({}));
+      showToast(body.detail || body.title || 'Something went wrong.');
+    }
+  } catch {
+    if (placeholder) placeholder.remove();
+    showToast('Could not reach the server.');
+  }
+}
+
+async function submitStroke(points) {
+  try {
+    const res = await fetch('/notebook/strokes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ points }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    // Add stroke to local state
+    strokes.push({ id: data.strokeId, points });
+    // If the stroke ticked an item, reload items from state
+    if (data.isCheckMark && data.itemId != null) {
+      const item = items.find(i => i.id === data.itemId);
+      if (item) {
+        item.isDone = true;
+        renderAll();
+      }
+    }
+  } catch { /* best effort */ }
+}
+
+async function toggleItem(id, done) {
+  try {
+    const res = await fetch(`/items/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ done }),
+    });
+    if (!res.ok) return;
+    const updated = await res.json();
+    const idx = items.findIndex(i => i.id === id);
+    if (idx >= 0) items[idx] = updated;
+    renderAll();
+  } catch { /* best effort */ }
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+let toastTimer = null;
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.style.display = 'block';
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.style.display = 'none'; }, 4000);
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+loadState();
+</script>
+</body>
+</html>

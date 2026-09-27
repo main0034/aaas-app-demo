@@ -13,7 +13,9 @@
 
 using System.ComponentModel.DataAnnotations;
 using App;
+using App.Assistant;
 using App.Data;
+using App.Endpoints;
 using Microsoft.EntityFrameworkCore;
 
 var migrateOnly = args is ["migrate"];
@@ -21,8 +23,10 @@ var migrateOnly = args is ["migrate"];
 var builder = WebApplication.CreateBuilder(args);
 
 // The platform injects PORT. Kestrel's own default (8080) is not the contract.
+// BIND_ADDRESS lets the local notebook run on localhost only (default 0.0.0.0).
 var port = builder.Configuration["PORT"] ?? "8000";
-builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+var bindAddress = builder.Configuration["BIND_ADDRESS"] ?? "0.0.0.0";
+builder.WebHost.UseUrls($"http://{bindAddress}:{port}");
 
 var appName = builder.Configuration["APP_NAME"] ?? "app";
 
@@ -49,6 +53,18 @@ builder.Services.AddDbContext<AppDbContext>((sp, options) =>
     }
 });
 
+// Register the AI assistant. ClaudeAssistant is used when enabled, otherwise a
+// no-op implementation that returns a short explanation.
+var assistantEnabled = builder.Configuration.GetValue<bool>("Assistant:Enabled");
+if (assistantEnabled)
+{
+    builder.Services.AddSingleton<IAssistant, ClaudeAssistant>();
+}
+else
+{
+    builder.Services.AddSingleton<IAssistant, DisabledAssistant>();
+}
+
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<DatabaseUnavailableHandler>();
 builder.Services.AddValidation();
@@ -62,6 +78,7 @@ if (migrateOnly)
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
+app.UseStaticFiles();
 
 // Liveness and readiness. Must never touch the database.
 app.MapGet("/health", () => Results.Ok(new { status = "ok", app = appName }));
@@ -131,6 +148,11 @@ app.MapPatch("/items/{id:int}", async (int id, ItemPatchIn input, AppDbContext c
     await ctx.SaveChangesAsync(ct);
     return Results.Ok(item);
 });
+
+app.MapNotebookEndpoints();
+
+// Serve the notebook UI for the root path (index.html is in wwwroot/).
+app.MapFallbackToFile("index.html");
 
 await app.RunAsync();
 return 0;

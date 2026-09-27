@@ -2,8 +2,6 @@ using System.ComponentModel.DataAnnotations;
 
 namespace App.Data;
 
-// A trivial Postgres-backed resource. It exists to prove the connection and the
-// migration path work end to end. Replace it when generating a real application.
 public sealed class Item
 {
     public int Id { get; set; }
@@ -20,4 +18,10 @@ public sealed class Item
     public bool IsDone { get; set; }
 
     public DateTimeOffset? DoneAt { get; set; }
+
+    // Position and size on the notebook sheet; null for items created before the notebook feature.
+    public double? X { get; set; }
+    public double? Y { get; set; }
+    public double? Width { get; set; }
+    public double? Height { get; set; }
 }

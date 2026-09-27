@@ -16,6 +16,7 @@ using App;
 using App.Assistant;
 using App.Data;
 using App.Endpoints;
+using App.Notebook;
 using Microsoft.EntityFrameworkCore;
 
 var migrateOnly = args is ["migrate"];
@@ -66,6 +67,9 @@ else
     builder.Services.AddSingleton<IAssistant, DisabledAssistant>();
     builder.Services.AddSingleton<IHandwritingReader, DisabledHandwritingReader>();
 }
+
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<PreviewCache>();
 
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<DatabaseUnavailableHandler>();

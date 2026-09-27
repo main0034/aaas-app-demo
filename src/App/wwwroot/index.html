@@ -46,6 +46,18 @@
     .text-node.thinking   { color: #888; font-style: italic; }
     .text-node.recognized { color: #999; font-size: 11px; font-style: italic; }
 
+    /* Live-preview text shown under pending ink */
+    #preview-text {
+      position: absolute;
+      color: #999;
+      font-size: 13px;
+      font-style: italic;
+      pointer-events: none;
+      white-space: nowrap;
+      z-index: 5;
+      display: none;
+    }
+
     /* Floating input that appears when the user clicks */
     #text-input {
       position: absolute;
@@ -89,10 +101,22 @@
     .panel-item span { word-break: break-word; }
     .panel-item.done span { color: #aaa; text-decoration: line-through; }
 
+    #live-preview-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #666;
+      margin-top: 10px;
+      cursor: pointer;
+      user-select: none;
+    }
+    #live-preview-label input { cursor: pointer; }
+
     #read-btn {
       display: block;
       width: 100%;
-      margin-top: 12px;
+      margin-top: 8px;
       padding: 6px 0;
       font: 12px monospace;
       background: #e8f0fe;
@@ -126,12 +150,17 @@
 
 <div id="sheet">
   <canvas id="draw-canvas"></canvas>
+  <div id="preview-text"></div>
   <input id="text-input" type="text" autocomplete="off" spellcheck="false" />
 </div>
 
 <div id="panel">
   <h2>Items</h2>
   <div id="item-list"></div>
+  <label id="live-preview-label">
+    <input type="checkbox" id="live-preview-toggle" checked />
+    Live preview
+  </label>
   <button id="read-btn" type="button">Read handwriting</button>
 </div>
 
@@ -141,12 +170,13 @@
 'use strict';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-const DRAW_THRESHOLD = 5;   // px of movement before a mousedown becomes a stroke
-const LINE_H = 22;          // approximate line height used when placing answers
-const PENDING_COLOR = '#1a6ee8';  // blue for unread pending ink
-const INK_COLOR     = '#333';     // black for ordinary / read ink
-const MAX_IMAGE_PX  = 1000;       // scale down if wider than this
-const PADDING       = 16;         // px of whitespace around the bounding box
+const DRAW_THRESHOLD  = 5;     // px of movement before a mousedown becomes a stroke
+const LINE_H          = 22;    // approximate line height used when placing answers
+const PENDING_COLOR   = '#1a6ee8'; // blue for unread pending ink
+const INK_COLOR       = '#333';    // black for ordinary / read ink
+const MAX_IMAGE_PX    = 1000;  // scale down if wider than this
+const PADDING         = 16;    // px of whitespace around the bounding box
+const PREVIEW_DELAY_MS = 2000; // idle time before a live preview fires
 
 // ── State ──────────────────────────────────────────────────────────────────────
 let strokes   = [];   // [{id, points:[{x,y},...], readAt}]
@@ -156,19 +186,30 @@ let questions = [];   // server Question objects
 // Stroke ids the user dismissed with Escape (session-only; never sent for reading).
 const pendingDismissed = new Set();
 
+// Stroke ids drawn in the current page session. Only these are pending; strokes
+// loaded from the server on page load are rendered as ordinary black ink.
+const sessionStrokeIds = new Set();
+
 // Current in-progress stroke
 let drawing = false;
 let currentPoints = [];
 let startX = 0, startY = 0;
 
+// ── Preview state ──────────────────────────────────────────────────────────────
+let inkVersion     = 0;     // increments whenever pending ink changes
+let previewInFlight = false;
+let previewTimer    = null;
+
 // ── DOM refs ──────────────────────────────────────────────────────────────────
-const sheet    = document.getElementById('sheet');
-const canvas   = document.getElementById('draw-canvas');
-const ctx2d    = canvas.getContext('2d');
-const textInput = document.getElementById('text-input');
-const itemList  = document.getElementById('item-list');
-const readBtn   = document.getElementById('read-btn');
-const toast     = document.getElementById('toast');
+const sheet            = document.getElementById('sheet');
+const canvas           = document.getElementById('draw-canvas');
+const ctx2d            = canvas.getContext('2d');
+const textInput        = document.getElementById('text-input');
+const itemList         = document.getElementById('item-list');
+const readBtn          = document.getElementById('read-btn');
+const toast            = document.getElementById('toast');
+const livePreviewToggle = document.getElementById('live-preview-toggle');
+const previewTextEl    = document.getElementById('preview-text');
 
 // ── Canvas sizing ─────────────────────────────────────────────────────────────
 function resizeCanvas() {
@@ -188,6 +229,8 @@ async function loadState() {
     items     = data.items     ?? [];
     strokes   = data.strokes   ?? [];
     questions = data.questions ?? [];
+    // sessionStrokeIds is intentionally NOT updated here: strokes from the server
+    // are ordinary drawings and are never treated as pending after a page reload.
     renderAll();
   } catch { /* server may be starting */ }
 }
@@ -253,8 +296,11 @@ function renderQuestions() {
   }
 }
 
+// A stroke is pending only if it was drawn in this session AND has not been read.
 function isPending(stroke) {
-  return stroke.readAt == null && !pendingDismissed.has(stroke.id);
+  return sessionStrokeIds.has(stroke.id) &&
+         stroke.readAt == null &&
+         !pendingDismissed.has(stroke.id);
 }
 
 function redraw() {
@@ -413,6 +459,11 @@ async function readHandwriting() {
   const pending = strokes.filter(s => isPending(s));
   if (pending.length === 0) return;
 
+  // Stop the live preview — we are committing the ink right now.
+  if (previewTimer != null) { clearTimeout(previewTimer); previewTimer = null; }
+  clearPreviewDisplay();
+  inkVersion++;   // discard any in-flight preview response
+
   // Calculate the bounding box of all pending strokes.
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const s of pending) {
@@ -507,7 +558,12 @@ function dismissPending() {
       changed = true;
     }
   }
-  if (changed) redraw();
+  if (changed) {
+    redraw();
+    clearPreviewDisplay();
+    if (previewTimer != null) { clearTimeout(previewTimer); previewTimer = null; }
+    inkVersion++;
+  }
 }
 
 // ── API calls ─────────────────────────────────────────────────────────────────
@@ -559,9 +615,11 @@ async function submitStroke(points) {
     });
     if (!res.ok) return;
     const data = await res.json();
+    // Track as a session stroke so it is treated as pending (blue).
+    sessionStrokeIds.add(data.strokeId);
     // Add stroke to local state, carrying the readAt from the server response.
     strokes.push({ id: data.strokeId, points, readAt: data.readAt ?? null });
-    // If the stroke ticked an item, reload items from state
+    // If the stroke ticked an item, update the item locally.
     if (data.isCheckMark && data.itemId != null) {
       const item = items.find(i => i.id === data.itemId);
       if (item) {
@@ -569,6 +627,8 @@ async function submitStroke(points) {
         renderAll();
       }
     }
+    // Ink changed: clear old preview and restart the idle timer.
+    onInkChanged();
   } catch { /* best effort */ }
 }
 
@@ -594,6 +654,147 @@ function showToast(msg) {
   toast.style.display = 'block';
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { toast.style.display = 'none'; }, 4000);
+}
+
+// ── Live preview ──────────────────────────────────────────────────────────────
+
+function livePreviewEnabled() {
+  return livePreviewToggle.checked;
+}
+
+livePreviewToggle.addEventListener('change', () => {
+  if (!livePreviewEnabled()) {
+    if (previewTimer != null) { clearTimeout(previewTimer); previewTimer = null; }
+    clearPreviewDisplay();
+  }
+});
+
+function clearPreviewDisplay() {
+  previewTextEl.style.display = 'none';
+  previewTextEl.textContent = '';
+}
+
+function showPreviewDisplay(text, x, y) {
+  previewTextEl.textContent = text;
+  previewTextEl.style.left  = x + 'px';
+  previewTextEl.style.top   = y + 'px';
+  previewTextEl.style.display = 'block';
+}
+
+// Called whenever the set of pending strokes changes (new stroke, dismiss, read).
+function onInkChanged() {
+  inkVersion++;
+  clearPreviewDisplay();
+  schedulePreview();
+}
+
+function schedulePreview() {
+  if (!livePreviewEnabled()) return;
+  if (previewTimer != null) clearTimeout(previewTimer);
+  previewTimer = setTimeout(runPreview, PREVIEW_DELAY_MS);
+}
+
+// Computes the padded bounding box of pending strokes on the canvas.
+// Returns null when there are no pending strokes.
+function pendingBBox() {
+  const pending = strokes.filter(isPending);
+  if (pending.length === 0) return null;
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of pending) {
+    for (const p of s.points) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+
+  const sheetW = canvas.width, sheetH = canvas.height;
+  return {
+    minX: Math.max(0, minX - PADDING),
+    minY: Math.max(0, minY - PADDING),
+    maxX: Math.min(sheetW, maxX + PADDING),
+    maxY: Math.min(sheetH, maxY + PADDING),
+  };
+}
+
+async function runPreview() {
+  previewTimer = null;
+  if (!livePreviewEnabled()) return;
+
+  const pending = strokes.filter(isPending);
+  if (pending.length === 0) { clearPreviewDisplay(); return; }
+  if (previewInFlight) return;  // completion handler calls runPreview again if ink changed
+
+  const myVersion = inkVersion;
+  previewInFlight = true;
+
+  // Compute bounding box and render pending strokes to a PNG.
+  const bbox = pendingBBox();
+  if (!bbox) { previewInFlight = false; return; }
+
+  const { minX, minY, maxX, maxY } = bbox;
+  const bboxW = maxX - minX, bboxH = maxY - minY;
+  if (bboxW <= 0 || bboxH <= 0) { previewInFlight = false; return; }
+
+  const scale  = bboxW > MAX_IMAGE_PX ? MAX_IMAGE_PX / bboxW : 1;
+  const offW   = Math.round(bboxW * scale);
+  const offH   = Math.round(bboxH * scale);
+  const off    = document.createElement('canvas');
+  off.width = offW; off.height = offH;
+  const oc = off.getContext('2d');
+  oc.fillStyle = '#fff'; oc.fillRect(0, 0, offW, offH);
+  oc.strokeStyle = '#000'; oc.lineWidth = 1.5; oc.lineCap = 'round'; oc.lineJoin = 'round';
+
+  for (const s of pending) {
+    if (!s.points || s.points.length < 2) continue;
+    oc.beginPath();
+    oc.moveTo((s.points[0].x - minX) * scale, (s.points[0].y - minY) * scale);
+    for (let i = 1; i < s.points.length; i++) {
+      oc.lineTo((s.points[i].x - minX) * scale, (s.points[i].y - minY) * scale);
+    }
+    oc.stroke();
+  }
+
+  const base64 = off.toDataURL('image/png').split(',')[1];
+
+  // Show "reading..." under the pending ink bounding box.
+  showPreviewDisplay('reading…', minX, maxY + 4);
+
+  try {
+    const res = await fetch('/notebook/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: base64 }),
+    });
+    previewInFlight = false;
+
+    if (inkVersion !== myVersion) {
+      // Ink changed while the request was in flight; run another preview.
+      clearPreviewDisplay();
+      runPreview();
+      return;
+    }
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.error) {
+        // Reader failure: short grey note, no pop-up.
+        showPreviewDisplay(data.error, minX, maxY + 4);
+      } else if (data.text) {
+        showPreviewDisplay(data.text, minX, maxY + 4);
+      } else {
+        // Nothing legible: show nothing.
+        clearPreviewDisplay();
+      }
+    } else {
+      clearPreviewDisplay();
+    }
+  } catch {
+    previewInFlight = false;
+    clearPreviewDisplay();
+  }
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────

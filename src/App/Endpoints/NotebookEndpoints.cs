@@ -18,6 +18,7 @@ public static class NotebookEndpoints
         app.MapPost("/notebook/lines", PostLine);
         app.MapPost("/notebook/strokes", PostStroke);
         app.MapPost("/notebook/ink", PostInk);
+        app.MapPost("/notebook/preview", PostPreview);
         return app;
     }
 
@@ -97,8 +98,8 @@ public static class NotebookEndpoints
     }
 
     // Receives a mouse stroke, saves it, and checks whether it is a check mark
-    // next to an item. Check mark strokes matched to an item are marked read_at
-    // immediately so they are not treated as pending handwriting.
+    // next to an item. Only strokes that successfully tick an item are marked
+    // read_at — a check mark that finds no matching item remains pending ink.
     private static async Task<IResult> PostStroke(
         StrokeIn input, AppDbContext ctx, CancellationToken ct)
     {
@@ -119,12 +120,13 @@ public static class NotebookEndpoints
         var items = await ctx.Items.Where(i => !i.IsDone).ToListAsync(ct);
         var matched = NotebookLogic.FindNearestItem(items, left, top, right, bottom);
 
-        // Mark the stroke as read and optionally tick the matched item.
-        stroke.ReadAt = DateTimeOffset.UtcNow;
+        // Only mark the stroke as read when it actually ticks an item.
+        // A check mark that matches nothing stays pending so it can be read as ink.
         if (matched != null && !matched.IsDone)
         {
             matched.IsDone = true;
             matched.DoneAt = DateTimeOffset.UtcNow;
+            stroke.ReadAt = DateTimeOffset.UtcNow;
         }
 
         await ctx.SaveChangesAsync(ct);
@@ -133,16 +135,17 @@ public static class NotebookEndpoints
     }
 
     // Receives pending stroke ids and a PNG of the pending ink. Sends the
-    // image to the handwriting reader, then creates an item or question from
-    // the recognised text. On success the strokes are marked read.
+    // image to the handwriting reader (or reuses a cached result), then creates
+    // an item or question from the recognised text. On success the strokes are
+    // marked read.
     //
-    // Order of operations: validate image → call reader → (return early if
-    // nothing legible or reader error) → validate stroke ids → create
+    // Order of operations: validate image → call reader (or cache) → (return
+    // early if nothing legible or reader error) → validate stroke ids → create
     // entity → mark strokes read. This ordering lets "nothing legible" and
     // PNG-validation tests pass without a database.
     private static async Task<IResult> PostInk(
         InkIn input, AppDbContext ctx, IHandwritingReader reader,
-        IAssistant assistant, CancellationToken ct)
+        IAssistant assistant, PreviewCache cache, CancellationToken ct)
     {
         // 1. Validate the image.
         byte[] imageBytes;
@@ -172,8 +175,16 @@ public static class NotebookEndpoints
                 statusCode: StatusCodes.Status400BadRequest);
         }
 
-        // 2. Call the handwriting reader.
-        var hwResult = await reader.ReadAsync(input.Image, ct);
+        // 2. Call the handwriting reader, reusing a cached result if the same
+        //    PNG bytes were already sent via the preview route.
+        var cacheKey = PreviewCache.ComputeKey(imageBytes);
+        var hwResult = cache.TryGet(cacheKey);
+        if (hwResult == null)
+        {
+            hwResult = await reader.ReadAsync(input.Image, ct);
+            cache.Set(cacheKey, hwResult);
+        }
+
         if (hwResult.Error != null)
         {
             return Results.Problem(
@@ -281,6 +292,59 @@ public static class NotebookEndpoints
         return Results.Created($"/notebook/questions/{question.Id}", new { type = "question", question });
     }
 
+    // Reads pending ink via the handwriting reader and returns the recognised text.
+    // Creates nothing, marks no strokes as read, and never calls the AI assistant.
+    // Results are cached by PNG hash so a subsequent Enter on the same ink is free.
+    //
+    // PNG and size validation is identical to PostInk.
+    private static async Task<IResult> PostPreview(
+        PreviewIn input, IHandwritingReader reader, PreviewCache cache, CancellationToken ct)
+    {
+        // Validate the image (same rules as PostInk).
+        byte[] imageBytes;
+        try
+        {
+            imageBytes = Convert.FromBase64String(input.Image);
+        }
+        catch (FormatException)
+        {
+            return Results.Problem(
+                detail: "Image is not valid base64.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (imageBytes.Length > MaxImageBytes)
+        {
+            return Results.Problem(
+                detail: "Image must not exceed 2 MB.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (imageBytes.Length < PngSignature.Length ||
+            !imageBytes[..PngSignature.Length].SequenceEqual(PngSignature))
+        {
+            return Results.Problem(
+                detail: "Image must be a PNG.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        var key = PreviewCache.ComputeKey(imageBytes);
+        var hwResult = cache.TryGet(key);
+        if (hwResult == null)
+        {
+            hwResult = await reader.ReadAsync(input.Image, ct);
+            cache.Set(key, hwResult);
+        }
+
+        if (hwResult.Error != null)
+        {
+            return Results.Ok(new { text = (string?)null, error = "Could not read the handwriting." });
+        }
+
+        var text = string.IsNullOrWhiteSpace(hwResult.Text) ? (string?)null : hwResult.Text!.Trim();
+        return Results.Ok(new { text, error = (string?)null });
+    }
+
     private static bool IsUniqueViolation(DbUpdateException ex)
     {
         // Npgsql error code 23505 = unique_violation
@@ -308,3 +372,5 @@ public sealed record InkIn(
     double BoundingTop,
     double BoundingWidth,
     double BoundingHeight);
+
+public sealed record PreviewIn([property: Required] string Image);

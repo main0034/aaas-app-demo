@@ -31,20 +31,20 @@ public sealed class ClaudeAssistant(IConfiguration config, ILogger<ClaudeAssista
         var psi = BuildProcessStartInfo(_claudePath, workingDir);
 
         using var process = new Process { StartInfo = psi };
-        process.Start();
-
-        await process.StandardInput.WriteAsync(question);
-        process.StandardInput.Close();
-
         // Read stdout and stderr concurrently; an unread stderr pipe stalls the child.
         using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(_timeoutSeconds));
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(linkedCts.Token);
-        var stderrTask = process.StandardError.ReadToEndAsync(linkedCts.Token);
-
         try
         {
+            process.Start();
+
+            await process.StandardInput.WriteAsync(question);
+            process.StandardInput.Close();
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(linkedCts.Token);
+            var stderrTask = process.StandardError.ReadToEndAsync(linkedCts.Token);
+
             await process.WaitForExitAsync(linkedCts.Token);
             var stdout = await stdoutTask;
             await stderrTask;
@@ -60,6 +60,11 @@ public sealed class ClaudeAssistant(IConfiguration config, ILogger<ClaudeAssista
         {
             try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
             throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to start '{ClaudePath}'", _claudePath);
+            return new AssistantResult(null, $"The AI is not available: '{_claudePath}' could not be started.");
         }
     }
 

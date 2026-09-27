@@ -1,4 +1,6 @@
 using App.Assistant;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace App.Tests.Notebook;
 
@@ -94,5 +96,23 @@ public sealed class AssistantTests
 
         Assert.Null(result.Answer);
         Assert.NotNull(result.Error);
+    }
+
+    // ── AskAsync failure paths ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task AskAsync_nonexistent_path_returns_error_rather_than_throwing()
+    {
+        var nonexistentPath = "/nonexistent/claude-does-not-exist";
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Assistant:ClaudePath"] = nonexistentPath })
+            .Build();
+        var assistant = new ClaudeAssistant(config, NullLogger<ClaudeAssistant>.Instance);
+
+        var result = await assistant.AskAsync("Is the CLI missing?", CancellationToken.None);
+
+        Assert.Null(result.Answer);
+        Assert.NotNull(result.Error);
+        Assert.Contains(nonexistentPath, result.Error);
     }
 }

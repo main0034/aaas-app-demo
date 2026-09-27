@@ -30,6 +30,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(i => i.Y).HasColumnName("y");
             e.Property(i => i.Width).HasColumnName("width");
             e.Property(i => i.Height).HasColumnName("height");
+            e.Property(i => i.Handwritten).HasColumnName("handwritten").HasDefaultValue(false);
             e.HasIndex(i => i.Title).IsUnique();
         });
 
@@ -45,6 +46,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .HasColumnName("points")
                 .HasColumnType("jsonb")
                 .HasConversion(pointsConverter);
+            e.Property(s => s.ReadAt).HasColumnName("read_at");
         });
 
         modelBuilder.Entity<Question>(e =>
@@ -54,6 +56,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(q => q.Text).HasColumnName("text");
             e.Property(q => q.X).HasColumnName("x");
             e.Property(q => q.Y).HasColumnName("y");
+            e.Property(q => q.Width).HasColumnName("width");
+            e.Property(q => q.Height).HasColumnName("height");
+            e.Property(q => q.Handwritten).HasColumnName("handwritten").HasDefaultValue(false);
             e.Property(q => q.Answer).HasColumnName("answer");
             e.Property(q => q.Error).HasColumnName("error");
             e.Property(q => q.AskedAt).HasColumnName("asked_at");

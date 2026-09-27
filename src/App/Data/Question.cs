@@ -12,6 +12,13 @@ public sealed class Question
     public double X { get; set; }
     public double Y { get; set; }
 
+    // Null for questions created before the handwriting feature.
+    public double? Width { get; set; }
+    public double? Height { get; set; }
+
+    // True when the question was created from handwritten ink rather than typed text.
+    public bool Handwritten { get; set; }
+
     public string? Answer { get; set; }
 
     [MaxLength(500)]

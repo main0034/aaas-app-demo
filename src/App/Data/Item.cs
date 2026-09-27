@@ -24,4 +24,7 @@ public sealed class Item
     public double? Y { get; set; }
     public double? Width { get; set; }
     public double? Height { get; set; }
+
+    // True when the item was created from handwritten ink rather than typed text.
+    public bool Handwritten { get; set; }
 }

@@ -6,15 +6,14 @@ namespace App.Assistant;
 // Sends a question to the local `claude` CLI and returns its answer.
 // The question is written to stdin so that a question beginning with "--"
 // cannot be interpreted as a flag.
-public sealed class ClaudeAssistant(IConfiguration config, ILogger<ClaudeAssistant> logger)
-    : IAssistant
+public sealed class ClaudeAssistant : IAssistant
 {
-    private readonly string _claudePath = ClaudeLocator.Resolve(
-        config["Assistant:ClaudePath"] ?? "claude",
-        Environment.GetEnvironmentVariable("PATH"),
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        File.Exists);
-    private readonly int _timeoutSeconds = int.TryParse(config["Assistant:TimeoutSeconds"], out var t) ? t : 120;
+    private readonly ClaudeRunner _runner;
+
+    public ClaudeAssistant(IConfiguration config, ILogger<ClaudeAssistant> logger)
+    {
+        _runner = new ClaudeRunner(config, logger);
+    }
 
     public async Task<AssistantResult> AskAsync(string question, CancellationToken ct)
     {
@@ -22,53 +21,18 @@ public sealed class ClaudeAssistant(IConfiguration config, ILogger<ClaudeAssista
         Directory.CreateDirectory(tmpDir);
         try
         {
-            return await RunAsync(question, tmpDir, ct);
+            var psi = BuildProcessStartInfo(_runner.ClaudePath, tmpDir);
+            var (stdout, error) = await _runner.RunAsync(psi, question, ct);
+            if (error != null)
+            {
+                return new AssistantResult(null, error);
+            }
+
+            return ParseResponse(stdout!);
         }
         finally
         {
             try { Directory.Delete(tmpDir, recursive: true); } catch { /* best effort */ }
-        }
-    }
-
-    private async Task<AssistantResult> RunAsync(string question, string workingDir, CancellationToken ct)
-    {
-        var psi = BuildProcessStartInfo(_claudePath, workingDir);
-
-        using var process = new Process { StartInfo = psi };
-        // Read stdout and stderr concurrently; an unread stderr pipe stalls the child.
-        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(_timeoutSeconds));
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
-
-        try
-        {
-            process.Start();
-
-            await process.StandardInput.WriteAsync(question);
-            process.StandardInput.Close();
-
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(linkedCts.Token);
-            var stderrTask = process.StandardError.ReadToEndAsync(linkedCts.Token);
-
-            await process.WaitForExitAsync(linkedCts.Token);
-            var stdout = await stdoutTask;
-            await stderrTask;
-            return ParseResponse(stdout);
-        }
-        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
-        {
-            logger.LogWarning("claude timed out after {Seconds} s", _timeoutSeconds);
-            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-            return new AssistantResult(null, "The AI did not respond in time.");
-        }
-        catch (OperationCanceledException)
-        {
-            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-            throw;
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Failed to start '{ClaudePath}'", _claudePath);
-            return new AssistantResult(null, $"The AI is not available: '{_claudePath}' could not be started.");
         }
     }
 
@@ -96,12 +60,7 @@ public sealed class ClaudeAssistant(IConfiguration config, ILogger<ClaudeAssista
         // with `node` beside it. Started from an IDE with a minimal PATH, the script
         // is found (see ClaudeLocator) but node is not. Put the CLI's own directory
         // first on the child's PATH so its interpreter resolves too.
-        var dir = Path.GetDirectoryName(claudePath);
-        if (!string.IsNullOrEmpty(dir))
-        {
-            var inherited = psi.Environment.TryGetValue("PATH", out var p) ? p : null;
-            psi.Environment["PATH"] = string.IsNullOrEmpty(inherited) ? dir : dir + Path.PathSeparator + inherited;
-        }
+        ClaudeRunner.PrependClaudeDir(psi, claudePath);
 
         return psi;
     }

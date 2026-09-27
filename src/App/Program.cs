@@ -53,16 +53,18 @@ builder.Services.AddDbContext<AppDbContext>((sp, options) =>
     }
 });
 
-// Register the AI assistant. ClaudeAssistant is used when enabled, otherwise a
-// no-op implementation that returns a short explanation.
+// Register the AI assistant and handwriting reader. CLI-backed implementations
+// are used when enabled; otherwise no-op implementations return a short explanation.
 var assistantEnabled = builder.Configuration.GetValue<bool>("Assistant:Enabled");
 if (assistantEnabled)
 {
     builder.Services.AddSingleton<IAssistant, ClaudeAssistant>();
+    builder.Services.AddSingleton<IHandwritingReader, ClaudeHandwritingReader>();
 }
 else
 {
     builder.Services.AddSingleton<IAssistant, DisabledAssistant>();
+    builder.Services.AddSingleton<IHandwritingReader, DisabledHandwritingReader>();
 }
 
 builder.Services.AddProblemDetails();

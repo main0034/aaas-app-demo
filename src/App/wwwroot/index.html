@@ -44,6 +44,7 @@
     .text-node.answer     { color: #267326; font-size: 13px; white-space: pre-wrap; max-width: 420px; }
     .text-node.ai-error   { color: #cc0000; font-size: 13px; }
     .text-node.thinking   { color: #888; font-style: italic; }
+    .text-node.recognized { color: #999; font-size: 11px; font-style: italic; }
 
     /* Floating input that appears when the user clicks */
     #text-input {
@@ -88,6 +89,20 @@
     .panel-item span { word-break: break-word; }
     .panel-item.done span { color: #aaa; text-decoration: line-through; }
 
+    #read-btn {
+      display: block;
+      width: 100%;
+      margin-top: 12px;
+      padding: 6px 0;
+      font: 12px monospace;
+      background: #e8f0fe;
+      border: 1px solid #b0c4f8;
+      border-radius: 3px;
+      cursor: pointer;
+      color: #2244aa;
+    }
+    #read-btn:hover { background: #d0e0fc; }
+
     /* Transient error toast */
     #toast {
       position: fixed;
@@ -117,6 +132,7 @@
 <div id="panel">
   <h2>Items</h2>
   <div id="item-list"></div>
+  <button id="read-btn" type="button">Read handwriting</button>
 </div>
 
 <div id="toast"></div>
@@ -127,11 +143,18 @@
 // ── Constants ──────────────────────────────────────────────────────────────────
 const DRAW_THRESHOLD = 5;   // px of movement before a mousedown becomes a stroke
 const LINE_H = 22;          // approximate line height used when placing answers
+const PENDING_COLOR = '#1a6ee8';  // blue for unread pending ink
+const INK_COLOR     = '#333';     // black for ordinary / read ink
+const MAX_IMAGE_PX  = 1000;       // scale down if wider than this
+const PADDING       = 16;         // px of whitespace around the bounding box
 
 // ── State ──────────────────────────────────────────────────────────────────────
-let strokes = [];           // [{id, points:[{x,y},...]}]
-let items   = [];           // server Item objects
-let questions = [];         // server Question objects
+let strokes   = [];   // [{id, points:[{x,y},...], readAt}]
+let items     = [];   // server Item objects
+let questions = [];   // server Question objects
+
+// Stroke ids the user dismissed with Escape (session-only; never sent for reading).
+const pendingDismissed = new Set();
 
 // Current in-progress stroke
 let drawing = false;
@@ -144,6 +167,7 @@ const canvas   = document.getElementById('draw-canvas');
 const ctx2d    = canvas.getContext('2d');
 const textInput = document.getElementById('text-input');
 const itemList  = document.getElementById('item-list');
+const readBtn   = document.getElementById('read-btn');
 const toast     = document.getElementById('toast');
 
 // ── Canvas sizing ─────────────────────────────────────────────────────────────
@@ -194,32 +218,54 @@ function renderAll() {
 function renderItems() {
   for (const item of items) {
     if (item.x == null) continue;   // no position — panel only
-    const cls = 'item' + (item.isDone ? ' done' : '');
-    placeNode(cls, item.title, item.x, item.y);
+    if (item.handwritten) {
+      // Show recognised text in small grey below the ink bounding box.
+      const textY = item.y + (item.height ?? 22) + 4;
+      placeNode('recognized', item.title, item.x, textY);
+    } else {
+      const cls = 'item' + (item.isDone ? ' done' : '');
+      placeNode(cls, item.title, item.x, item.y);
+    }
   }
 }
 
 function renderQuestions() {
   for (const q of questions) {
-    placeNode('question', q.text, q.x, q.y);
-    const answerY = q.y + LINE_H;
-    if (q.answer != null) {
-      placeNode('answer', q.answer, q.x, answerY);
-    } else if (q.error != null) {
-      placeNode('ai-error', q.error, q.x, answerY);
+    if (q.handwritten) {
+      // Show recognised text below the ink bounding box.
+      const textY = q.y + (q.height ?? 22) + 4;
+      placeNode('recognized', q.text, q.x, textY);
+      const answerY = textY + LINE_H;
+      if (q.answer != null) {
+        placeNode('answer', q.answer, q.x, answerY);
+      } else if (q.error != null) {
+        placeNode('ai-error', q.error, q.x, answerY);
+      }
+    } else {
+      placeNode('question', q.text, q.x, q.y);
+      const answerY = q.y + LINE_H;
+      if (q.answer != null) {
+        placeNode('answer', q.answer, q.x, answerY);
+      } else if (q.error != null) {
+        placeNode('ai-error', q.error, q.x, answerY);
+      }
     }
   }
 }
 
+function isPending(stroke) {
+  return stroke.readAt == null && !pendingDismissed.has(stroke.id);
+}
+
 function redraw() {
   ctx2d.clearRect(0, 0, canvas.width, canvas.height);
-  ctx2d.strokeStyle = '#333';
   ctx2d.lineWidth = 1.5;
   ctx2d.lineCap = 'round';
   ctx2d.lineJoin = 'round';
 
   for (const s of strokes) {
     if (!s.points || s.points.length < 2) continue;
+    ctx2d.strokeStyle = isPending(s) ? PENDING_COLOR : INK_COLOR;
     ctx2d.beginPath();
     ctx2d.moveTo(s.points[0].x, s.points[0].y);
     for (let i = 1; i < s.points.length; i++) {
@@ -230,6 +276,7 @@ function redraw() {
 
   // In-progress stroke
   if (drawing && currentPoints.length >= 2) {
+    ctx2d.strokeStyle = INK_COLOR;
     ctx2d.beginPath();
     ctx2d.moveTo(currentPoints[0].x, currentPoints[0].y);
     for (let i = 1; i < currentPoints.length; i++) {
@@ -348,6 +395,121 @@ textInput.addEventListener('blur', () => {
   textInput.value = '';
 });
 
+// ── Keyboard shortcuts (when text input is not open) ─────────────────────────
+document.addEventListener('keydown', e => {
+  if (document.activeElement === textInput) return;
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    readHandwriting();
+  } else if (e.key === 'Escape') {
+    dismissPending();
+  }
+});
+
+// ── Read handwriting ──────────────────────────────────────────────────────────
+readBtn.addEventListener('click', () => readHandwriting());
+
+async function readHandwriting() {
+  const pending = strokes.filter(s => isPending(s));
+  if (pending.length === 0) return;
+
+  // Calculate the bounding box of all pending strokes.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of pending) {
+    for (const p of s.points) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+
+  // Add padding (clamped to canvas bounds).
+  const sheetW = canvas.width;
+  const sheetH = canvas.height;
+  minX = Math.max(0, minX - PADDING);
+  minY = Math.max(0, minY - PADDING);
+  maxX = Math.min(sheetW, maxX + PADDING);
+  maxY = Math.min(sheetH, maxY + PADDING);
+
+  const bboxW = maxX - minX;
+  const bboxH = maxY - minY;
+  if (bboxW <= 0 || bboxH <= 0) return;
+
+  // Scale so the image is at most MAX_IMAGE_PX wide.
+  const scale = bboxW > MAX_IMAGE_PX ? MAX_IMAGE_PX / bboxW : 1;
+  const canvasW = Math.round(bboxW * scale);
+  const canvasH = Math.round(bboxH * scale);
+
+  // Render pending strokes onto an off-screen canvas (black on white).
+  const off = document.createElement('canvas');
+  off.width  = canvasW;
+  off.height = canvasH;
+  const offCtx = off.getContext('2d');
+  offCtx.fillStyle = '#fff';
+  offCtx.fillRect(0, 0, canvasW, canvasH);
+  offCtx.strokeStyle = '#000';
+  offCtx.lineWidth = 1.5;
+  offCtx.lineCap = 'round';
+  offCtx.lineJoin = 'round';
+
+  for (const s of pending) {
+    if (!s.points || s.points.length < 2) continue;
+    offCtx.beginPath();
+    offCtx.moveTo((s.points[0].x - minX) * scale, (s.points[0].y - minY) * scale);
+    for (let i = 1; i < s.points.length; i++) {
+      offCtx.lineTo((s.points[i].x - minX) * scale, (s.points[i].y - minY) * scale);
+    }
+    offCtx.stroke();
+  }
+
+  const dataUrl = off.toDataURL('image/png');
+  const base64  = dataUrl.split(',')[1];
+
+  try {
+    const res = await fetch('/notebook/ink', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        strokeIds:     pending.map(s => s.id),
+        image:         base64,
+        boundingLeft:  minX,
+        boundingTop:   minY,
+        boundingWidth: bboxW,
+        boundingHeight: bboxH,
+      }),
+    });
+
+    if (res.status === 200) {
+      const data = await res.json();
+      if (data.type === 'nothing') {
+        showToast(data.message ?? 'No legible text found.');
+      } else {
+        await loadState();
+      }
+    } else if (res.status === 201) {
+      await loadState();
+    } else {
+      const body = await res.json().catch(() => ({}));
+      showToast(body.detail || body.title || 'Could not read handwriting.');
+    }
+  } catch {
+    showToast('Could not reach the server.');
+  }
+}
+
+// ── Dismiss pending ink ───────────────────────────────────────────────────────
+function dismissPending() {
+  let changed = false;
+  for (const s of strokes) {
+    if (isPending(s)) {
+      pendingDismissed.add(s.id);
+      changed = true;
+    }
+  }
+  if (changed) redraw();
+}
+
 // ── API calls ─────────────────────────────────────────────────────────────────
 async function submitLine(text, x, y) {
   const { width, height } = measureText(text);
@@ -397,8 +559,8 @@ async function submitStroke(points) {
     });
     if (!res.ok) return;
     const data = await res.json();
-    // Add stroke to local state
-    strokes.push({ id: data.strokeId, points });
+    // Add stroke to local state, carrying the readAt from the server response.
+    strokes.push({ id: data.strokeId, points, readAt: data.readAt ?? null });
     // If the stroke ticked an item, reload items from state
     if (data.isCheckMark && data.itemId != null) {
       const item = items.find(i => i.id === data.itemId);

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "Notebook (local)": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "launchUrl": "",
+      "applicationUrl": "http://127.0.0.1:8000",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "PORT": "8000",
+        "BIND_ADDRESS": "127.0.0.1",
+        "PGHOST": "localhost",
+        "PGDATABASE": "postgres",
+        "PGUSER": "postgres",
+        "PGPASSWORD": "dev",
+        "Assistant__Enabled": "true"
+      }
+    },
+    "Migrate (local)": {
+      "commandName": "Project",
+      "commandLineArgs": "migrate",
+      "launchBrowser": false,
+      "environmentVariables": {
+        "PGHOST": "localhost",
+        "PGDATABASE": "postgres",
+        "PGUSER": "postgres",
+        "PGPASSWORD": "dev"
+      }
+    }
+  }
+}

@@ -9,7 +9,11 @@ namespace App.Assistant;
 public sealed class ClaudeAssistant(IConfiguration config, ILogger<ClaudeAssistant> logger)
     : IAssistant
 {
-    private readonly string _claudePath = config["Assistant:ClaudePath"] ?? "claude";
+    private readonly string _claudePath = ClaudeLocator.Resolve(
+        config["Assistant:ClaudePath"] ?? "claude",
+        Environment.GetEnvironmentVariable("PATH"),
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        File.Exists);
     private readonly int _timeoutSeconds = int.TryParse(config["Assistant:TimeoutSeconds"], out var t) ? t : 120;
 
     public async Task<AssistantResult> AskAsync(string question, CancellationToken ct)
@@ -87,6 +91,18 @@ public sealed class ClaudeAssistant(IConfiguration config, ILogger<ClaudeAssista
         psi.ArgumentList.Add("");
         psi.ArgumentList.Add("--strict-mcp-config");
         psi.ArgumentList.Add("--no-session-persistence");
+
+        // An npm or Homebrew install of `claude` is a Node script (#!/usr/bin/env node)
+        // with `node` beside it. Started from an IDE with a minimal PATH, the script
+        // is found (see ClaudeLocator) but node is not. Put the CLI's own directory
+        // first on the child's PATH so its interpreter resolves too.
+        var dir = Path.GetDirectoryName(claudePath);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            var inherited = psi.Environment.TryGetValue("PATH", out var p) ? p : null;
+            psi.Environment["PATH"] = string.IsNullOrEmpty(inherited) ? dir : dir + Path.PathSeparator + inherited;
+        }
+
         return psi;
     }
 

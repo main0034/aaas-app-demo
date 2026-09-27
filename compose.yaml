@@ -1,0 +1,50 @@
+# Local development only: Postgres for the notebook, and the app's own
+# migrations applied to it. The app itself is NOT in here - it runs on the host
+# (from Rider, or `dotnet run`) because the `claude` CLI and its login live on
+# the host. See "Run the notebook locally" in README.md.
+#
+#   docker compose up -d --build     # db, then migrations, then exits
+#
+# Rider runs this before the app via .run/Notebook.run.xml.
+
+name: aaas-notebook
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: dev
+    ports:
+      # Loopback only: nothing else on the network reaches this database.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # One-shot: the same image CI builds, started with its `migrate` argument -
+  # exactly what the init container does in Azure. Re-running `up --build`
+  # applies whatever migrations the checked-out branch has added.
+  migrate:
+    build: .
+    command: ["migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+    # Share the db container's network namespace so the database is reachable
+    # as `localhost`. Database.cs only relaxes TLS for a host literally named
+    # localhost (the local Postgres has no certificate); any other name,
+    # including the compose service name, requires TLS and fails.
+    network_mode: "service:db"
+    environment:
+      PGHOST: localhost
+      PGDATABASE: postgres
+      PGUSER: postgres
+      PGPASSWORD: dev
+    restart: "no"
+
+volumes:
+  pgdata:

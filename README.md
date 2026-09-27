@@ -27,11 +27,12 @@ installed and logged in (run `claude` once in a terminal).
 
 Open the solution and pick the **Notebook** run configuration (committed in
 `.run/`). Run or Debug it. Before it starts the app it runs
-**Notebook: database + migrations**, which is `docker compose up --build`:
-Postgres on `127.0.0.1:5432` and a one-shot container that applies the
-migrations with the app's own `migrate` command. The app then starts with the
-`Notebook (local)` launch profile (`src/App/Properties/launchSettings.json`) and
-opens `http://127.0.0.1:8000`.
+**Notebook: database + migrations**, which is `scripts/notebook-db.sh`:
+Postgres on `127.0.0.1:5432` (Docker Compose) and a one-shot container that
+applies the migrations with the app's own `migrate` command. If a migration
+fails, the app is not started. The app then starts with the `Notebook (local)`
+launch profile (`src/App/Properties/launchSettings.json`) and opens
+`http://127.0.0.1:8000`.
 
 The first run builds the app image for the migration step and takes a few
 minutes; later runs reuse the cache.
@@ -45,7 +46,7 @@ launch profile.
 ### From a terminal
 
 ```bash
-docker compose up -d --build                         # Postgres + migrations
+./scripts/notebook-db.sh                             # Postgres + migrations
 dotnet run --project src/App --launch-profile "Notebook (local)"
 ```
 

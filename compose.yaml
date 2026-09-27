@@ -3,9 +3,9 @@
 # (from Rider, or `dotnet run`) because the `claude` CLI and its login live on
 # the host. See "Run the notebook locally" in README.md.
 #
-#   docker compose up -d --build     # db, then migrations, then exits
+#   ./scripts/notebook-db.sh         # db, then migrations, then exits
 #
-# Rider runs this before the app via .run/Notebook.run.xml.
+# Rider runs that script before the app (.run/Notebook.run.xml).
 
 name: aaas-notebook
 

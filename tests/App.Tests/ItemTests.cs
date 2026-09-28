@@ -75,4 +75,50 @@ public sealed class ItemTests(WebApplicationFactory<Program> factory)
         Assert.Single(result);
         Assert.Equal(1, result[0].Id);
     }
+
+    // Search tests must show which specific items are returned — not just that the
+    // route exists — to avoid the class of bug where a filter is wired incorrectly
+    // and all items come back (or none).
+
+    [Fact]
+    public void WhereSearch_returns_title_and_note_matches_case_insensitively()
+    {
+        var items = new[]
+        {
+            new Item { Id = 1, Title = "Fix the Login Bug", Note = null },
+            new Item { Id = 2, Title = "Deploy to prod", Note = "needs hotfix sign-off" },
+            new Item { Id = 3, Title = "Write docs", Note = null },
+        }.AsQueryable();
+
+        var result = items.WhereSearch("fix").OrderBy(i => i.Id).ToList();
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal(1, result[0].Id); // "Fix" appears in title
+        Assert.Equal(2, result[1].Id); // "fix" appears in note
+        // Id 3 is absent: neither title nor note contains "fix"
+    }
+
+    [Fact]
+    public void WhereSearch_combined_with_WhereOpen_excludes_done_matches()
+    {
+        var items = new[]
+        {
+            new Item { Id = 1, Title = "Fix login", IsDone = false },
+            new Item { Id = 2, Title = "Fix logout", IsDone = true },
+            new Item { Id = 3, Title = "Deploy app", IsDone = false },
+        }.AsQueryable();
+
+        var result = items.WhereSearch("fix").WhereOpen().ToList();
+
+        Assert.Single(result);
+        Assert.Equal(1, result[0].Id); // open + matches; Id 2 is done, Id 3 does not match
+    }
+
+    [Fact]
+    public async Task ListItems_search_fails_cleanly_without_database()
+    {
+        var response = await _client.GetAsync("/items?q=fix", Ct);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+    }
 }

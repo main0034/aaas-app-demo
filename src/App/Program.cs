@@ -91,12 +91,16 @@ app.MapGet("/ready", async (Database db, IServiceProvider sp, CancellationToken 
     }
 });
 
-app.MapGet("/items", async (bool? open, AppDbContext ctx, CancellationToken ct) =>
+app.MapGet("/items", async (bool? open, string? q, AppDbContext ctx, CancellationToken ct) =>
 {
     IQueryable<Item> query = ctx.Items.AsNoTracking();
     if (open == true)
     {
         query = query.WhereOpen();
+    }
+    if (!string.IsNullOrWhiteSpace(q))
+    {
+        query = query.WhereSearch(q.Trim());
     }
     return await query.OrderByDescending(i => i.Id).Take(100).ToListAsync(ct);
 });

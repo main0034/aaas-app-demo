@@ -107,10 +107,31 @@ app.MapGet("/items", async (bool? open, string? q, AppDbContext ctx, Cancellatio
 
 app.MapPost("/items", async (ItemIn input, AppDbContext ctx, CancellationToken ct) =>
 {
-    var item = new Item { Title = input.Title, Note = input.Note, Priority = input.Priority };
+    var item = new Item { Title = input.Title, Note = input.Note, Priority = input.Priority, DueDate = input.DueDate };
     ctx.Items.Add(item);
     await ctx.SaveChangesAsync(ct);
     return Results.Created($"/items/{item.Id}", item);
+});
+
+app.MapGet("/items/overdue", async (AppDbContext ctx, CancellationToken ct) =>
+{
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    return await ctx.Items.AsNoTracking()
+        .WhereOverdue(today)
+        .OrderBy(i => i.DueDate)
+        .ToListAsync(ct);
+});
+
+app.MapPut("/items/{id:int}/due-date", async (int id, DueDateIn input, AppDbContext ctx, CancellationToken ct) =>
+{
+    var item = await ctx.Items.FindAsync([id], ct);
+    if (item is null)
+    {
+        return Results.NotFound();
+    }
+    item.DueDate = input.Date;
+    await ctx.SaveChangesAsync(ct);
+    return Results.Ok(item);
 });
 
 app.MapPatch("/items/{id:int}", async (int id, ItemPatchIn input, AppDbContext ctx, CancellationToken ct) =>
@@ -142,7 +163,10 @@ return 0;
 public sealed record ItemIn(
     [property: Required, StringLength(200, MinimumLength = 1)] string Title,
     [property: StringLength(2000)] string? Note,
-    [property: Range(1, 5)] int? Priority = null);
+    [property: Range(1, 5)] int? Priority = null,
+    DateOnly? DueDate = null);
+
+public sealed record DueDateIn(DateOnly? Date);
 
 public sealed record ItemPatchIn([property: Required] bool? Done);
 

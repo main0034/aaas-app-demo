@@ -22,6 +22,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(i => i.Priority).HasColumnName("priority");
             e.Property(i => i.IsDone).HasColumnName("is_done");
             e.Property(i => i.DoneAt).HasColumnName("done_at");
+            e.Property(i => i.DueDate).HasColumnName("due_date");
             e.HasIndex(i => i.Title).IsUnique();
         });
     }

@@ -121,4 +121,46 @@ public sealed class ItemTests(WebApplicationFactory<Program> factory)
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
     }
+
+    // WhereOverdue tests confirm the exact items that appear in the overdue list.
+    // Overdue = not done AND has a due date AND due date is strictly before today.
+
+    [Fact]
+    public void WhereOverdue_returns_undone_items_strictly_before_today_in_due_date_order()
+    {
+        var today = new DateOnly(2026, 9, 29);
+        var items = new[]
+        {
+            new Item { Id = 1, Title = "very-overdue",  IsDone = false, DueDate = new DateOnly(2026, 9, 1) },
+            new Item { Id = 2, Title = "due-yesterday", IsDone = false, DueDate = new DateOnly(2026, 9, 28) },
+            new Item { Id = 3, Title = "due-today",     IsDone = false, DueDate = today },
+            new Item { Id = 4, Title = "done-overdue",  IsDone = true,  DueDate = new DateOnly(2026, 9, 1) },
+            new Item { Id = 5, Title = "no-due-date",   IsDone = false, DueDate = null },
+        }.AsQueryable();
+
+        var result = items.WhereOverdue(today).OrderBy(i => i.DueDate).ToList();
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal(1, result[0].Id); // most overdue (Sep 1) first
+        Assert.Equal(2, result[1].Id); // less overdue (Sep 28) second
+        // Id 3 (due today) is absent — today is not overdue
+        // Id 4 (done) is absent — done items are never overdue
+        // Id 5 (no due date) is absent — no due date means never overdue
+    }
+
+    [Fact]
+    public async Task ListOverdue_fails_cleanly_without_database()
+    {
+        var response = await _client.GetAsync("/items/overdue", Ct);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SetDueDate_fails_cleanly_without_database()
+    {
+        var response = await _client.PutAsJsonAsync("/items/1/due-date", new { date = "2026-10-01" }, Ct);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+    }
 }

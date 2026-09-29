@@ -12,4 +12,7 @@ public static class ItemQueryExtensions
             i.Title.ToLower().Contains(lower) ||
             (i.Note != null && i.Note.ToLower().Contains(lower)));
     }
+
+    public static IQueryable<Item> WhereOverdue(this IQueryable<Item> source, DateOnly today) =>
+        source.Where(i => !i.IsDone && i.DueDate != null && i.DueDate < today);
 }

@@ -20,4 +20,6 @@ public sealed class Item
     public bool IsDone { get; set; }
 
     public DateTimeOffset? DoneAt { get; set; }
+
+    public DateOnly? DueDate { get; set; }
 }

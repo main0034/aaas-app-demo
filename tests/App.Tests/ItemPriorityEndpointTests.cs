@@ -43,7 +43,7 @@ public sealed class ItemPriorityEndpointTests(TemplateDatabase template) : Endpo
             new Item { Title = "p3", Priority = 3 },
             new Item { Title = "none" });
 
-        Assert.Equal(["p2", "p1"], await TitlesAsync("/items/priority?maxPriority=2"));
+        Assert.Equal(["p1", "p2"], await TitlesAsync("/items/priority?maxPriority=2"));
     }
 
     [Fact]

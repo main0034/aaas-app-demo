@@ -113,6 +113,16 @@ app.MapPost("/items", async (ItemIn input, AppDbContext ctx, CancellationToken c
     return Results.Created($"/items/{item.Id}", item);
 });
 
+app.MapGet("/items/priority", async (int? maxPriority, AppDbContext ctx, CancellationToken ct) =>
+{
+    IQueryable<Item> query = ctx.Items.AsNoTracking().WhereOpen();
+    if (maxPriority.HasValue)
+    {
+        query = query.WherePriorityAtMost(maxPriority.Value);
+    }
+    return await query.OrderByPriority().ToListAsync(ct);
+});
+
 app.MapGet("/items/overdue", async (AppDbContext ctx, CancellationToken ct) =>
 {
     var today = DateOnly.FromDateTime(DateTime.UtcNow);

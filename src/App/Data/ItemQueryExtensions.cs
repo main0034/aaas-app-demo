@@ -15,4 +15,16 @@ public static class ItemQueryExtensions
 
     public static IQueryable<Item> WhereOverdue(this IQueryable<Item> source, DateOnly today) =>
         source.Where(i => !i.IsDone && i.DueDate != null && i.DueDate < today);
+
+    // Keeps only items with a priority at or above (numerically <=) maxPriority.
+    // Unprioritised items are excluded because "priority 2 or better" has no
+    // meaning for an item that has no priority at all.
+    public static IQueryable<Item> WherePriorityAtMost(this IQueryable<Item> source, int maxPriority) =>
+        source.Where(i => i.Priority != null && i.Priority <= maxPriority);
+
+    // Priority 1 first, then 2…5, then unprioritised. Ties broken newest first.
+    public static IOrderedQueryable<Item> OrderByPriority(this IQueryable<Item> source) =>
+        source.OrderBy(i => i.Priority == null ? 1 : 0)
+              .ThenBy(i => i.Priority)
+              .ThenByDescending(i => i.Id);
 }

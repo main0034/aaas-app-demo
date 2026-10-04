@@ -23,4 +23,23 @@ public sealed class ItemTests(WebApplicationFactory<Program> factory)
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(366)]
+    [InlineData(1000)]
+    public async Task Upcoming_rejects_days_outside_0_to_365(int d)
+    {
+        var response = await _client.GetAsync($"/items/upcoming?days={d}", Ct);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Upcoming_rejects_non_numeric_days()
+    {
+        var response = await _client.GetAsync("/items/upcoming?days=abc", Ct);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
 }

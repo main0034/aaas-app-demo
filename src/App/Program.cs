@@ -132,6 +132,23 @@ app.MapGet("/items/overdue", async (AppDbContext ctx, CancellationToken ct) =>
         .ToListAsync(ct);
 });
 
+app.MapGet("/items/upcoming", async (string? days, AppDbContext ctx, CancellationToken ct) =>
+{
+    int d = 7;
+    if (days is not null && (!int.TryParse(days, out d) || d < 0 || d > 365))
+    {
+        return Results.BadRequest();
+    }
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    var until = today.AddDays(d);
+    var items = await ctx.Items.AsNoTracking()
+        .WhereUpcoming(today, until)
+        .OrderBy(i => i.DueDate)
+        .ThenBy(i => i.Id)
+        .ToListAsync(ct);
+    return Results.Ok(items);
+});
+
 app.MapPut("/items/{id:int}/due-date", async (int id, DueDateIn input, AppDbContext ctx, CancellationToken ct) =>
 {
     var item = await ctx.Items.FindAsync([id], ct);

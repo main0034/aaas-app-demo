@@ -27,4 +27,8 @@ public static class ItemQueryExtensions
         source.OrderBy(i => i.Priority == null ? 1 : 0)
               .ThenBy(i => i.Priority)
               .ThenByDescending(i => i.Id);
+
+    // Open items with a due date in [from, to] inclusive.
+    public static IQueryable<Item> WhereUpcoming(this IQueryable<Item> source, DateOnly from, DateOnly to) =>
+        source.Where(i => !i.IsDone && i.DueDate != null && i.DueDate >= from && i.DueDate <= to);
 }

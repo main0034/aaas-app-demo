@@ -52,11 +52,14 @@ public static class TagEndpoints
         });
 
         app.MapGet("/tags", async (AppDbContext ctx, CancellationToken ct) =>
-            await ctx.ItemTags
+        {
+            var rows = await ctx.ItemTags
                 .GroupBy(t => t.Tag)
-                .Select(g => new TagSummary(g.Key, g.Count()))
-                .OrderBy(t => t.Name)
-                .ToListAsync(ct));
+                .Select(g => new { Name = g.Key, Items = g.Count() })
+                .OrderBy(r => r.Name)
+                .ToListAsync(ct);
+            return rows.Select(r => new TagSummary(r.Name, r.Items)).ToList();
+        });
 
         return app;
     }

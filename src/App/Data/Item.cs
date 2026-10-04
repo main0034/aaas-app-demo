@@ -22,4 +22,6 @@ public sealed class Item
     public DateTimeOffset? DoneAt { get; set; }
 
     public DateOnly? DueDate { get; set; }
+
+    public int? ProjectId { get; set; }
 }

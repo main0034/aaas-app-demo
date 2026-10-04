@@ -14,6 +14,7 @@
 using System.ComponentModel.DataAnnotations;
 using App;
 using App.Data;
+using App.Endpoints;
 using Microsoft.EntityFrameworkCore;
 
 var migrateOnly = args is ["migrate"];
@@ -90,6 +91,8 @@ app.MapGet("/ready", async (Database db, IServiceProvider sp, CancellationToken 
         return Results.Ok(new { database = "unavailable", detail = ex.GetBaseException().Message });
     }
 });
+
+app.MapProjectEndpoints();
 
 app.MapGet("/items", async (bool? open, string? q, AppDbContext ctx, CancellationToken ct) =>
 {

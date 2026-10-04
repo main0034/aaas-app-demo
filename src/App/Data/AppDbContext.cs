@@ -7,6 +7,7 @@ namespace App.Data;
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
     public DbSet<Item> Items => Set<Item>();
+    public DbSet<Project> Projects => Set<Project>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -23,7 +24,28 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(i => i.IsDone).HasColumnName("is_done");
             e.Property(i => i.DoneAt).HasColumnName("done_at");
             e.Property(i => i.DueDate).HasColumnName("due_date");
+            e.Property(i => i.ProjectId).HasColumnName("project_id");
             e.HasIndex(i => i.Title).IsUnique();
+            e.HasOne<Project>()
+                .WithMany(p => p.Items)
+                .HasForeignKey(i => i.ProjectId)
+                .IsRequired(false)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Project>(e =>
+        {
+            e.ToTable("projects");
+            e.Property(p => p.Id).HasColumnName("id");
+            e.Property(p => p.Name).HasColumnName("name");
+            // Stored generated column enables a case-insensitive unique constraint
+            // without citext or a manual expression index.
+            e.Property<string>("NameLower")
+                .HasColumnName("name_lower")
+                .HasComputedColumnSql("lower(name)", stored: true);
+            e.HasIndex("NameLower")
+                .IsUnique()
+                .HasDatabaseName("ix_projects_name_lower");
         });
     }
 }

@@ -65,6 +65,38 @@ namespace App.Migrations
 
                     b.ToTable("items", (string)null);
                 });
+
+            modelBuilder.Entity("App.Data.ItemTag", b =>
+                {
+                    b.Property<int>("ItemId")
+                        .HasColumnType("integer")
+                        .HasColumnName("item_id");
+
+                    b.Property<string>("Tag")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("tag");
+
+                    b.HasKey("ItemId", "Tag");
+
+                    b.ToTable("item_tags", (string)null);
+                });
+
+            modelBuilder.Entity("App.Data.ItemTag", b =>
+                {
+                    b.HasOne("App.Data.Item", "Item")
+                        .WithMany("Tags")
+                        .HasForeignKey("ItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Item");
+                });
+
+            modelBuilder.Entity("App.Data.Item", b =>
+                {
+                    b.Navigation("Tags");
+                });
 #pragma warning restore 612, 618
         }
     }

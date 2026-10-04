@@ -7,6 +7,7 @@ namespace App.Data;
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
     public DbSet<Item> Items => Set<Item>();
+    public DbSet<ItemTag> ItemTags => Set<ItemTag>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -24,6 +25,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(i => i.DoneAt).HasColumnName("done_at");
             e.Property(i => i.DueDate).HasColumnName("due_date");
             e.HasIndex(i => i.Title).IsUnique();
+        });
+
+        modelBuilder.Entity<ItemTag>(e =>
+        {
+            e.ToTable("item_tags");
+            e.HasKey(t => new { t.ItemId, t.Tag });
+            e.Property(t => t.ItemId).HasColumnName("item_id");
+            e.Property(t => t.Tag).HasColumnName("tag").HasMaxLength(30);
+            e.HasOne(t => t.Item)
+             .WithMany(i => i.Tags)
+             .HasForeignKey(t => t.ItemId)
+             .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

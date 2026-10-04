@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 
 namespace App.Data;
 
@@ -22,4 +23,7 @@ public sealed class Item
     public DateTimeOffset? DoneAt { get; set; }
 
     public DateOnly? DueDate { get; set; }
+
+    [JsonIgnore]
+    public List<ItemTag> Tags { get; set; } = [];
 }

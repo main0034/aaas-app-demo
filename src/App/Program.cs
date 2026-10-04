@@ -14,6 +14,7 @@
 using System.ComponentModel.DataAnnotations;
 using App;
 using App.Data;
+using App.Endpoints;
 using Microsoft.EntityFrameworkCore;
 
 var migrateOnly = args is ["migrate"];
@@ -91,7 +92,7 @@ app.MapGet("/ready", async (Database db, IServiceProvider sp, CancellationToken 
     }
 });
 
-app.MapGet("/items", async (bool? open, string? q, AppDbContext ctx, CancellationToken ct) =>
+app.MapGet("/items", async (bool? open, string? q, string? tag, AppDbContext ctx, CancellationToken ct) =>
 {
     IQueryable<Item> query = ctx.Items.AsNoTracking();
     if (open == true)
@@ -101,6 +102,10 @@ app.MapGet("/items", async (bool? open, string? q, AppDbContext ctx, Cancellatio
     if (!string.IsNullOrWhiteSpace(q))
     {
         query = query.WhereSearch(q.Trim());
+    }
+    if (!string.IsNullOrWhiteSpace(tag))
+    {
+        query = query.WhereTag(tag.Trim().ToLowerInvariant());
     }
     return await query.OrderByDescending(i => i.Id).Take(100).ToListAsync(ct);
 });
@@ -166,6 +171,8 @@ app.MapPatch("/items/{id:int}", async (int id, ItemPatchIn input, AppDbContext c
     await ctx.SaveChangesAsync(ct);
     return Results.Ok(item);
 });
+
+app.MapTagEndpoints();
 
 await app.RunAsync();
 return 0;

@@ -22,6 +22,9 @@ public static class ItemQueryExtensions
     public static IQueryable<Item> WherePriorityAtMost(this IQueryable<Item> source, int maxPriority) =>
         source.Where(i => i.Priority != null && i.Priority <= maxPriority);
 
+    public static IQueryable<Item> WhereTag(this IQueryable<Item> source, string tag) =>
+        source.Where(i => i.Tags.Any(t => t.Tag == tag));
+
     // Priority 1 first, then 2…5, then unprioritised. Ties broken newest first.
     public static IOrderedQueryable<Item> OrderByPriority(this IQueryable<Item> source) =>
         source.OrderBy(i => i.Priority == null ? 1 : 0)

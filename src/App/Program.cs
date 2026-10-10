@@ -133,6 +133,45 @@ app.MapGet("/items/overdue", async (AppDbContext ctx, CancellationToken ct) =>
         .ToListAsync(ct);
 });
 
+app.MapGet("/items/summary", async (string? q, AppDbContext ctx, CancellationToken ct) =>
+{
+    if (q is not null && q.Length > 100)
+    {
+        return Results.BadRequest();
+    }
+
+    var today = DateOnly.FromDateTime(DateTime.UtcNow);
+    var dueSoonEnd = today.AddDays(7);
+
+    IQueryable<Item> query = ctx.Items.AsNoTracking();
+    if (!string.IsNullOrWhiteSpace(q))
+    {
+        query = query.WhereSearch(q.Trim());
+    }
+
+    var rows = await query
+        .Select(i => new { i.IsDone, i.DueDate, i.Priority })
+        .ToListAsync(ct);
+
+    var open = rows.Where(i => !i.IsDone).ToList();
+    var byPriority = new Dictionary<string, int>
+    {
+        ["1"] = open.Count(i => i.Priority == 1),
+        ["2"] = open.Count(i => i.Priority == 2),
+        ["3"] = open.Count(i => i.Priority == 3),
+        ["4"] = open.Count(i => i.Priority == 4),
+        ["5"] = open.Count(i => i.Priority == 5),
+        ["none"] = open.Count(i => i.Priority == null),
+    };
+
+    return Results.Ok(new ItemSummaryOut(
+        Open: open.Count,
+        Overdue: open.Count(i => i.DueDate.HasValue && i.DueDate.Value < today),
+        DueSoon: open.Count(i => i.DueDate.HasValue && i.DueDate.Value >= today && i.DueDate.Value <= dueSoonEnd),
+        Done: rows.Count(i => i.IsDone),
+        ByPriority: byPriority));
+});
+
 app.MapPut("/items/{id:int}/due-date", async (int id, DueDateIn input, AppDbContext ctx, CancellationToken ct) =>
 {
     var item = await ctx.Items.FindAsync([id], ct);
@@ -182,6 +221,13 @@ public sealed record ItemIn(
 public sealed record DueDateIn(DateOnly? Date);
 
 public sealed record ItemPatchIn([property: Required] bool? Done);
+
+public sealed record ItemSummaryOut(
+    int Open,
+    int Overdue,
+    int DueSoon,
+    int Done,
+    Dictionary<string, int> ByPriority);
 
 // Exposes Program to WebApplicationFactory in the tests.
 public partial class Program;

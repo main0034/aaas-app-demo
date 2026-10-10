@@ -15,9 +15,13 @@ public sealed class ItemSummaryValidationTests(WebApplicationFactory<Program> fa
     [Fact]
     public async Task Q_over_100_chars_is_400()
     {
+        // Arrange
         var q = new string('x', 101);
+
+        // Act
         var response = await _client.GetAsync($"/items/summary?q={q}", Ct);
 
+        // Assert
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 }

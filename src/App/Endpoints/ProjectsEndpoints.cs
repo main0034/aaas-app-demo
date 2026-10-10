@@ -15,7 +15,11 @@ public static class ProjectsEndpoints
         return app;
     }
 
-    private static async Task<IResult> CreateProject(ProjectIn input, AppDbContext ctx, CancellationToken ct)
+    private static async Task<IResult> CreateProject(
+        ProjectIn input,
+        AppDbContext ctx,
+        CancellationToken ct
+    )
     {
         var name = input.Name?.Trim() ?? string.Empty;
         if (name.Length == 0 || name.Length > 100)
@@ -32,13 +36,16 @@ public static class ProjectsEndpoints
         var project = new Project { Name = name };
         ctx.Projects.Add(project);
         await ctx.SaveChangesAsync(ct);
-        return Results.Created($"/projects/{project.Id}", new ProjectCreated(project.Id, project.Name));
+        return Results.Created(
+            $"/projects/{project.Id}",
+            new ProjectCreated(project.Id, project.Name)
+        );
     }
 
     private static async Task<IResult> ListProjects(AppDbContext ctx, CancellationToken ct)
     {
-        var rows = await ctx.Projects
-            .OrderBy(p => p.Name.ToLower())
+        var rows = await ctx
+            .Projects.OrderBy(p => p.Name.ToLower())
             .Select(p => new
             {
                 p.Id,
@@ -48,9 +55,15 @@ public static class ProjectsEndpoints
             })
             .ToListAsync(ct);
 
-        return Results.Ok(rows.Select(p => new ProjectSummary(
-            p.Id, p.Name, p.Total, p.Done,
-            p.Total == 0 ? 0 : p.Done * 100 / p.Total)));
+        return Results.Ok(
+            rows.Select(p => new ProjectSummary(
+                p.Id,
+                p.Name,
+                p.Total,
+                p.Done,
+                p.Total == 0 ? 0 : p.Done * 100 / p.Total
+            ))
+        );
     }
 
     private static async Task<IResult> GetProject(int id, AppDbContext ctx, CancellationToken ct)
@@ -61,7 +74,8 @@ public static class ProjectsEndpoints
             return Results.NotFound();
         }
 
-        var items = await ctx.Items.AsNoTracking()
+        var items = await ctx
+            .Items.AsNoTracking()
             .Where(i => i.ProjectId == id)
             .OrderBy(i => i.IsDone ? 1 : 0)
             .ThenByDescending(i => i.Id)
@@ -71,7 +85,9 @@ public static class ProjectsEndpoints
         int done = items.Count(i => i.IsDone);
         int percentDone = total == 0 ? 0 : done * 100 / total;
 
-        return Results.Ok(new ProjectDetail(project.Id, project.Name, total, done, percentDone, items));
+        return Results.Ok(
+            new ProjectDetail(project.Id, project.Name, total, done, percentDone, items)
+        );
     }
 
     private static async Task<IResult> DeleteProject(int id, AppDbContext ctx, CancellationToken ct)
@@ -92,7 +108,12 @@ public static class ProjectsEndpoints
         return Results.NoContent();
     }
 
-    private static async Task<IResult> AssignItemProject(int id, ItemProjectIn input, AppDbContext ctx, CancellationToken ct)
+    private static async Task<IResult> AssignItemProject(
+        int id,
+        ItemProjectIn input,
+        AppDbContext ctx,
+        CancellationToken ct
+    )
     {
         var item = await ctx.Items.FindAsync([id], ct);
         if (item is null)
@@ -100,7 +121,10 @@ public static class ProjectsEndpoints
             return Results.NotFound();
         }
 
-        if (input.ProjectId is not null && !await ctx.Projects.AnyAsync(p => p.Id == input.ProjectId, ct))
+        if (
+            input.ProjectId is not null
+            && !await ctx.Projects.AnyAsync(p => p.Id == input.ProjectId, ct)
+        )
         {
             return Results.BadRequest();
         }
@@ -112,7 +136,18 @@ public static class ProjectsEndpoints
 }
 
 public sealed record ProjectIn(string? Name);
+
 public sealed record ItemProjectIn(int? ProjectId);
+
 public sealed record ProjectCreated(int Id, string Name);
+
 public sealed record ProjectSummary(int Id, string Name, int Total, int Done, int PercentDone);
-public sealed record ProjectDetail(int Id, string Name, int Total, int Done, int PercentDone, List<Item> Items);
+
+public sealed record ProjectDetail(
+    int Id,
+    string Name,
+    int Total,
+    int Done,
+    int PercentDone,
+    List<Item> Items
+);

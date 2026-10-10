@@ -29,8 +29,10 @@ public sealed class HealthTests(WebApplicationFactory<Program> factory)
     [Fact]
     public async Task Health_returns_ok()
     {
+        // Act
         var response = await _client.GetAsync("/health", Ct);
 
+        // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
         Assert.Equal("ok", body.GetProperty("status").GetString());
@@ -39,27 +41,36 @@ public sealed class HealthTests(WebApplicationFactory<Program> factory)
     [Fact]
     public async Task Ready_reports_unconfigured_database()
     {
+        // Act
         var body = await _client.GetFromJsonAsync<JsonElement>("/ready", Ct);
 
-        Assert.Contains(body.GetProperty("database").GetString(), new[] { "unconfigured", "unavailable" });
+        // Assert
+        Assert.Contains(
+            body.GetProperty("database").GetString(),
+            new[] { "unconfigured", "unavailable" }
+        );
     }
 
     [Fact]
     public async Task Items_fails_cleanly_without_a_database()
     {
+        // Act
         // 503, not a stack trace.
         var response = await _client.GetAsync("/items", Ct);
 
+        // Assert
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
     }
 
     [Fact]
     public async Task Create_item_rejects_empty_title()
     {
+        // Act
         // Validation runs before the database is touched, so this is a 400 even
         // with no database configured.
         var response = await _client.PostAsJsonAsync("/items", new { title = "" }, Ct);
 
+        // Assert
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 }

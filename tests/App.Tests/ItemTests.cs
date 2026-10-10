@@ -19,8 +19,10 @@ public sealed class ItemTests(WebApplicationFactory<Program> factory)
     [Fact]
     public async Task MarkDone_rejects_missing_done_field()
     {
+        // Act
         var response = await _client.PatchAsJsonAsync("/items/1", new { }, Ct);
 
+        // Assert
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 }

@@ -27,9 +27,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(i => i.ProjectId).HasColumnName("project_id");
             e.HasIndex(i => i.Title).IsUnique();
             e.HasOne(i => i.Project)
-             .WithMany(p => p.Items)
-             .HasForeignKey(i => i.ProjectId)
-             .OnDelete(DeleteBehavior.Restrict);
+                .WithMany(p => p.Items)
+                .HasForeignKey(i => i.ProjectId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<Project>(e =>

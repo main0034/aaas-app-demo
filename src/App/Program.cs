@@ -163,6 +163,57 @@ app.MapGet(
 );
 
 app.MapGet(
+    "/items/calendar",
+    async (string? @from, string? to, AppDbContext ctx, CancellationToken ct) =>
+    {
+        DateOnly start,
+            end;
+
+        if (@from is null && to is null)
+        {
+            start = DateOnly.FromDateTime(DateTime.UtcNow);
+            end = start.AddDays(6);
+        }
+        else if (@from is null || to is null)
+        {
+            return Results.BadRequest();
+        }
+        else if (
+            !DateOnly.TryParseExact(@from, "yyyy-MM-dd", out start)
+            || !DateOnly.TryParseExact(to, "yyyy-MM-dd", out end)
+        )
+        {
+            return Results.BadRequest();
+        }
+        else if (start > end || end > start.AddDays(30))
+        {
+            return Results.BadRequest();
+        }
+
+        var dueDates = await ctx
+            .Items.AsNoTracking()
+            .Where(i => !i.IsDone && i.DueDate != null && i.DueDate >= start && i.DueDate <= end)
+            .Select(i => i.DueDate)
+            .ToListAsync(ct);
+
+        var lookup = dueDates
+            .Where(d => d.HasValue)
+            .GroupBy(d => d!.Value)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var result = new List<CalendarDay>();
+        for (var date = start; date <= end; date = date.AddDays(1))
+        {
+            result.Add(
+                new CalendarDay(date.ToString("yyyy-MM-dd"), lookup.GetValueOrDefault(date))
+            );
+        }
+
+        return Results.Ok(result);
+    }
+);
+
+app.MapGet(
     "/items/summary",
     async (string? q, AppDbContext ctx, CancellationToken ct) =>
     {
@@ -278,6 +329,8 @@ public sealed record ItemSummaryOut(
     int Done,
     Dictionary<string, int> ByPriority
 );
+
+public sealed record CalendarDay(string Date, int Due);
 
 // Exposes Program to WebApplicationFactory in the tests.
 public partial class Program;

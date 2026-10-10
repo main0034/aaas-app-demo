@@ -34,21 +34,24 @@ var appName = builder.Configuration["APP_NAME"] ?? "app";
 // reports real failures itself.
 builder.Logging.AddFilter(
     "Microsoft.EntityFrameworkCore.Database.Command",
-    migrateOnly ? LogLevel.None : LogLevel.Warning);
+    migrateOnly ? LogLevel.None : LogLevel.Warning
+);
 
 builder.Services.AddSingleton<Database>();
-builder.Services.AddDbContext<AppDbContext>((sp, options) =>
-{
-    var db = sp.GetRequiredService<Database>();
-    if (db.IsConfigured)
+builder.Services.AddDbContext<AppDbContext>(
+    (sp, options) =>
     {
-        options.UseNpgsql(db.DataSource);
+        var db = sp.GetRequiredService<Database>();
+        if (db.IsConfigured)
+        {
+            options.UseNpgsql(db.DataSource);
+        }
+        else
+        {
+            options.UseNpgsql().AddInterceptors(new NotConfiguredInterceptor());
+        }
     }
-    else
-    {
-        options.UseNpgsql().AddInterceptors(new NotConfiguredInterceptor());
-    }
-});
+);
 
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<DatabaseUnavailableHandler>();
@@ -68,144 +71,189 @@ app.UseStatusCodePages();
 app.MapGet("/health", () => Results.Ok(new { status = "ok", app = appName }));
 
 // Reports database connectivity. Not wired to the container probes.
-app.MapGet("/ready", async (Database db, IServiceProvider sp, CancellationToken ct) =>
-{
-    if (!db.IsConfigured)
+app.MapGet(
+    "/ready",
+    async (Database db, IServiceProvider sp, CancellationToken ct) =>
     {
-        return Results.Ok(new { database = "unconfigured" });
-    }
-
-    try
-    {
-        var ctx = sp.GetRequiredService<AppDbContext>();
-        var applied = await ctx.Database.GetAppliedMigrationsAsync(ct);
-        return Results.Ok(new
+        if (!db.IsConfigured)
         {
-            database = "ok",
-            auth = db.UsesManagedIdentity ? "managed-identity" : "password",
-            migration = applied.LastOrDefault(),
-        });
+            return Results.Ok(new { database = "unconfigured" });
+        }
+
+        try
+        {
+            var ctx = sp.GetRequiredService<AppDbContext>();
+            var applied = await ctx.Database.GetAppliedMigrationsAsync(ct);
+            return Results.Ok(
+                new
+                {
+                    database = "ok",
+                    auth = db.UsesManagedIdentity ? "managed-identity" : "password",
+                    migration = applied.LastOrDefault(),
+                }
+            );
+        }
+        catch (Exception ex) when (DatabaseUnavailableHandler.IsDatabaseFailure(ex))
+        {
+            return Results.Ok(
+                new { database = "unavailable", detail = ex.GetBaseException().Message }
+            );
+        }
     }
-    catch (Exception ex) when (DatabaseUnavailableHandler.IsDatabaseFailure(ex))
+);
+
+app.MapGet(
+    "/items",
+    async (bool? open, string? q, AppDbContext ctx, CancellationToken ct) =>
     {
-        return Results.Ok(new { database = "unavailable", detail = ex.GetBaseException().Message });
+        IQueryable<Item> query = ctx.Items.AsNoTracking();
+        if (open == true)
+        {
+            query = query.WhereOpen();
+        }
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            query = query.WhereSearch(q.Trim());
+        }
+        return await query.OrderByDescending(i => i.Id).Take(100).ToListAsync(ct);
     }
-});
+);
 
-app.MapGet("/items", async (bool? open, string? q, AppDbContext ctx, CancellationToken ct) =>
-{
-    IQueryable<Item> query = ctx.Items.AsNoTracking();
-    if (open == true)
+app.MapPost(
+    "/items",
+    async (ItemIn input, AppDbContext ctx, CancellationToken ct) =>
     {
-        query = query.WhereOpen();
+        var item = new Item
+        {
+            Title = input.Title,
+            Note = input.Note,
+            Priority = input.Priority,
+            DueDate = input.DueDate,
+        };
+        ctx.Items.Add(item);
+        await ctx.SaveChangesAsync(ct);
+        return Results.Created($"/items/{item.Id}", item);
     }
-    if (!string.IsNullOrWhiteSpace(q))
+);
+
+app.MapGet(
+    "/items/priority",
+    async (int? maxPriority, AppDbContext ctx, CancellationToken ct) =>
     {
-        query = query.WhereSearch(q.Trim());
+        IQueryable<Item> query = ctx.Items.AsNoTracking().WhereOpen();
+        if (maxPriority.HasValue)
+        {
+            query = query.WherePriorityAtMost(maxPriority.Value);
+        }
+        return await query.OrderByPriority().ToListAsync(ct);
     }
-    return await query.OrderByDescending(i => i.Id).Take(100).ToListAsync(ct);
-});
+);
 
-app.MapPost("/items", async (ItemIn input, AppDbContext ctx, CancellationToken ct) =>
-{
-    var item = new Item { Title = input.Title, Note = input.Note, Priority = input.Priority, DueDate = input.DueDate };
-    ctx.Items.Add(item);
-    await ctx.SaveChangesAsync(ct);
-    return Results.Created($"/items/{item.Id}", item);
-});
-
-app.MapGet("/items/priority", async (int? maxPriority, AppDbContext ctx, CancellationToken ct) =>
-{
-    IQueryable<Item> query = ctx.Items.AsNoTracking().WhereOpen();
-    if (maxPriority.HasValue)
+app.MapGet(
+    "/items/overdue",
+    async (AppDbContext ctx, CancellationToken ct) =>
     {
-        query = query.WherePriorityAtMost(maxPriority.Value);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        return await ctx
+            .Items.AsNoTracking()
+            .WhereOverdue(today)
+            .OrderBy(i => i.DueDate)
+            .ToListAsync(ct);
     }
-    return await query.OrderByPriority().ToListAsync(ct);
-});
+);
 
-app.MapGet("/items/overdue", async (AppDbContext ctx, CancellationToken ct) =>
-{
-    var today = DateOnly.FromDateTime(DateTime.UtcNow);
-    return await ctx.Items.AsNoTracking()
-        .WhereOverdue(today)
-        .OrderBy(i => i.DueDate)
-        .ToListAsync(ct);
-});
-
-app.MapGet("/items/summary", async (string? q, AppDbContext ctx, CancellationToken ct) =>
-{
-    if (q is not null && q.Length > 100)
+app.MapGet(
+    "/items/summary",
+    async (string? q, AppDbContext ctx, CancellationToken ct) =>
     {
-        return Results.BadRequest();
+        if (q is not null && q.Length > 100)
+        {
+            return Results.BadRequest();
+        }
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var dueSoonEnd = today.AddDays(7);
+
+        IQueryable<Item> query = ctx.Items.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            query = query.WhereSearch(q.Trim());
+        }
+
+        var rows = await query
+            .Select(i => new
+            {
+                i.IsDone,
+                i.DueDate,
+                i.Priority,
+            })
+            .ToListAsync(ct);
+
+        var open = rows.Where(i => !i.IsDone).ToList();
+        var byPriority = new Dictionary<string, int>
+        {
+            ["1"] = open.Count(i => i.Priority == 1),
+            ["2"] = open.Count(i => i.Priority == 2),
+            ["3"] = open.Count(i => i.Priority == 3),
+            ["4"] = open.Count(i => i.Priority == 4),
+            ["5"] = open.Count(i => i.Priority == 5),
+            ["none"] = open.Count(i => i.Priority == null),
+        };
+
+        return Results.Ok(
+            new ItemSummaryOut(
+                Open: open.Count,
+                Overdue: open.Count(i => i.DueDate.HasValue && i.DueDate.Value < today),
+                DueSoon: open.Count(i =>
+                    i.DueDate.HasValue && i.DueDate.Value >= today && i.DueDate.Value <= dueSoonEnd
+                ),
+                Done: rows.Count(i => i.IsDone),
+                ByPriority: byPriority
+            )
+        );
     }
+);
 
-    var today = DateOnly.FromDateTime(DateTime.UtcNow);
-    var dueSoonEnd = today.AddDays(7);
-
-    IQueryable<Item> query = ctx.Items.AsNoTracking();
-    if (!string.IsNullOrWhiteSpace(q))
+app.MapPut(
+    "/items/{id:int}/due-date",
+    async (int id, DueDateIn input, AppDbContext ctx, CancellationToken ct) =>
     {
-        query = query.WhereSearch(q.Trim());
+        var item = await ctx.Items.FindAsync([id], ct);
+        if (item is null)
+        {
+            return Results.NotFound();
+        }
+        item.DueDate = input.Date;
+        await ctx.SaveChangesAsync(ct);
+        return Results.Ok(item);
     }
+);
 
-    var rows = await query
-        .Select(i => new { i.IsDone, i.DueDate, i.Priority })
-        .ToListAsync(ct);
-
-    var open = rows.Where(i => !i.IsDone).ToList();
-    var byPriority = new Dictionary<string, int>
+app.MapPatch(
+    "/items/{id:int}",
+    async (int id, ItemPatchIn input, AppDbContext ctx, CancellationToken ct) =>
     {
-        ["1"] = open.Count(i => i.Priority == 1),
-        ["2"] = open.Count(i => i.Priority == 2),
-        ["3"] = open.Count(i => i.Priority == 3),
-        ["4"] = open.Count(i => i.Priority == 4),
-        ["5"] = open.Count(i => i.Priority == 5),
-        ["none"] = open.Count(i => i.Priority == null),
-    };
+        var item = await ctx.Items.FindAsync([id], ct);
+        if (item is null)
+        {
+            return Results.NotFound();
+        }
 
-    return Results.Ok(new ItemSummaryOut(
-        Open: open.Count,
-        Overdue: open.Count(i => i.DueDate.HasValue && i.DueDate.Value < today),
-        DueSoon: open.Count(i => i.DueDate.HasValue && i.DueDate.Value >= today && i.DueDate.Value <= dueSoonEnd),
-        Done: rows.Count(i => i.IsDone),
-        ByPriority: byPriority));
-});
+        if (input.Done!.Value && !item.IsDone)
+        {
+            item.IsDone = true;
+            item.DoneAt = DateTimeOffset.UtcNow;
+        }
+        else if (!input.Done.Value)
+        {
+            item.IsDone = false;
+            item.DoneAt = null;
+        }
 
-app.MapPut("/items/{id:int}/due-date", async (int id, DueDateIn input, AppDbContext ctx, CancellationToken ct) =>
-{
-    var item = await ctx.Items.FindAsync([id], ct);
-    if (item is null)
-    {
-        return Results.NotFound();
+        await ctx.SaveChangesAsync(ct);
+        return Results.Ok(item);
     }
-    item.DueDate = input.Date;
-    await ctx.SaveChangesAsync(ct);
-    return Results.Ok(item);
-});
-
-app.MapPatch("/items/{id:int}", async (int id, ItemPatchIn input, AppDbContext ctx, CancellationToken ct) =>
-{
-    var item = await ctx.Items.FindAsync([id], ct);
-    if (item is null)
-    {
-        return Results.NotFound();
-    }
-
-    if (input.Done!.Value && !item.IsDone)
-    {
-        item.IsDone = true;
-        item.DoneAt = DateTimeOffset.UtcNow;
-    }
-    else if (!input.Done.Value)
-    {
-        item.IsDone = false;
-        item.DoneAt = null;
-    }
-
-    await ctx.SaveChangesAsync(ct);
-    return Results.Ok(item);
-});
+);
 
 app.MapProjectsEndpoints();
 
@@ -216,7 +264,8 @@ public sealed record ItemIn(
     [property: Required, StringLength(200, MinimumLength = 1)] string Title,
     [property: StringLength(2000)] string? Note,
     [property: Range(1, 5)] int? Priority = null,
-    DateOnly? DueDate = null);
+    DateOnly? DueDate = null
+);
 
 public sealed record DueDateIn(DateOnly? Date);
 
@@ -227,7 +276,8 @@ public sealed record ItemSummaryOut(
     int Overdue,
     int DueSoon,
     int Done,
-    Dictionary<string, int> ByPriority);
+    Dictionary<string, int> ByPriority
+);
 
 // Exposes Program to WebApplicationFactory in the tests.
 public partial class Program;

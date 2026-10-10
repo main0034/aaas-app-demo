@@ -12,48 +12,66 @@ public sealed class ItemPriorityEndpointTests(TemplateDatabase template) : Endpo
     [Fact]
     public async Task Priority_list_orders_by_priority_then_newest_first()
     {
+        // Act
         await SeedAsync(
             new Item { Title = "p2-old", Priority = 2 },
             new Item { Title = "p1-first", Priority = 1 },
             new Item { Title = "none-old" },
             new Item { Title = "p1-second", Priority = 1 },
-            new Item { Title = "none-new" });
+            new Item { Title = "none-new" }
+        );
 
+        // Assert
         Assert.Equal(
             ["p1-second", "p1-first", "p2-old", "none-new", "none-old"],
-            await TitlesAsync("/items/priority"));
+            await TitlesAsync("/items/priority")
+        );
     }
 
     [Fact]
     public async Task Priority_list_excludes_done_items()
     {
+        // Act
         await SeedAsync(
             new Item { Title = "open", Priority = 1 },
-            new Item { Title = "done", Priority = 1, IsDone = true });
+            new Item
+            {
+                Title = "done",
+                Priority = 1,
+                IsDone = true,
+            }
+        );
 
+        // Assert
         Assert.Equal(["open"], await TitlesAsync("/items/priority"));
     }
 
     [Fact]
     public async Task Priority_list_with_maxPriority_excludes_lower_and_unprioritised()
     {
+        // Act
         await SeedAsync(
             new Item { Title = "p1", Priority = 1 },
             new Item { Title = "p2", Priority = 2 },
             new Item { Title = "p3", Priority = 3 },
-            new Item { Title = "none" });
+            new Item { Title = "none" }
+        );
 
+        // Assert
         Assert.Equal(["p1", "p2"], await TitlesAsync("/items/priority?maxPriority=2"));
     }
 
     [Fact]
     public async Task Priority_list_with_maxPriority_1_returns_only_priority_1()
     {
+        // Act
         await SeedAsync(
             new Item { Title = "p1", Priority = 1 },
             new Item { Title = "p2", Priority = 2 },
-            new Item { Title = "none" });
+            new Item { Title = "none" }
+        );
 
+        // Assert
         Assert.Equal(["p1"], await TitlesAsync("/items/priority?maxPriority=1"));
     }
 }

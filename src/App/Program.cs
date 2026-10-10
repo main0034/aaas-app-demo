@@ -14,6 +14,7 @@
 using System.ComponentModel.DataAnnotations;
 using App;
 using App.Data;
+using App.Endpoints;
 using Microsoft.EntityFrameworkCore;
 
 var migrateOnly = args is ["migrate"];
@@ -205,6 +206,8 @@ app.MapPatch("/items/{id:int}", async (int id, ItemPatchIn input, AppDbContext c
     await ctx.SaveChangesAsync(ct);
     return Results.Ok(item);
 });
+
+app.MapProjectsEndpoints();
 
 await app.RunAsync();
 return 0;

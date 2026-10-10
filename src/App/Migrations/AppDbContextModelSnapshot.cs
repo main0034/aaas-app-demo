@@ -52,6 +52,10 @@ namespace App.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("priority");
 
+                    b.Property<int?>("ProjectId")
+                        .HasColumnType("integer")
+                        .HasColumnName("project_id");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -60,10 +64,47 @@ namespace App.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ProjectId");
+
                     b.HasIndex("Title")
                         .IsUnique();
 
                     b.ToTable("items", (string)null);
+                });
+
+            modelBuilder.Entity("App.Data.Project", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("name");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("projects", (string)null);
+                });
+
+            modelBuilder.Entity("App.Data.Item", b =>
+                {
+                    b.HasOne("App.Data.Project", "Project")
+                        .WithMany("Items")
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Project");
+                });
+
+            modelBuilder.Entity("App.Data.Project", b =>
+                {
+                    b.Navigation("Items");
                 });
 #pragma warning restore 612, 618
         }

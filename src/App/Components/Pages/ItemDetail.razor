@@ -1,0 +1,139 @@
+@page "/app/items/{Id:int}"
+@inject AppApi Api
+@inject NavigationManager Navigation
+
+<PageTitle>Edit item</PageTitle>
+
+<p><a href="/">Back to all items</a></p>
+
+@if (item is null)
+{
+    <h1>Not found</h1>
+    <p class="muted">This item no longer exists.</p>
+}
+else
+{
+    <h1>@item.Title</h1>
+
+    <div class="card">
+        <EditForm Model="Edit" FormName="edit-item" OnSubmit="SaveAsync" method="post">
+            <label for="title">Title</label>
+            <InputText id="title" @bind-Value="Edit.Title" />
+            <label for="note">Note</label>
+            <InputTextArea id="note" @bind-Value="Edit.Note" rows="3" />
+            <label for="priority">Priority</label>
+            <InputSelect id="priority" @bind-Value="Edit.Priority">
+                <option value="">None</option>
+                @for (var p = 1; p <= 5; p++)
+                {
+                    <option value="@p">@p@(p == 1 ? " (most important)" : "")</option>
+                }
+            </InputSelect>
+            <Errors Result="editResult" />
+            <button type="submit">Save changes</button>
+        </EditForm>
+    </div>
+
+    <div class="card">
+        <EditForm Model="Due" FormName="due-date" OnSubmit="SetDueAsync" method="post">
+            <label for="due">Due date</label>
+            <InputText id="due" type="date" @bind-Value="Due.Date" />
+            <Errors Result="dueResult" />
+            <button type="submit">Set due date</button>
+        </EditForm>
+    </div>
+
+    <div class="card">
+        <EditForm Model="Done" FormName="done" OnSubmit="ToggleDoneAsync" method="post">
+            <input type="hidden" name="Done.Value" value="@(item.IsDone ? "false" : "true")" />
+            <p>@(item.IsDone ? "This item is done." : "This item is open.")</p>
+            <button type="submit" class="secondary">@(item.IsDone ? "Reopen" : "Mark as done")</button>
+        </EditForm>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public int Id { get; set; }
+
+    [SupplyParameterFromForm(FormName = "edit-item")]
+    private EditItemForm Edit { get; set; } = null!;
+
+    [SupplyParameterFromForm(FormName = "due-date")]
+    private DueDateForm Due { get; set; } = null!;
+
+    [SupplyParameterFromForm(FormName = "done")]
+    private DoneForm Done { get; set; } = null!;
+
+    private Item? item;
+    private ApiResult? editResult;
+    private ApiResult? dueResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        item = await Api.TryGetAsync<Item>($"/items/{Id}");
+        Edit ??= new()
+        {
+            Title = item?.Title,
+            Note = item?.Note,
+            Priority = item?.Priority?.ToString(),
+        };
+        Due ??= new() { Date = item?.DueDate?.ToString("yyyy-MM-dd") };
+        Done ??= new();
+    }
+
+    private async Task SaveAsync()
+    {
+        editResult = await Api.PutAsync(
+            $"/items/{Id}",
+            new
+            {
+                title = Edit.Title,
+                note = string.IsNullOrEmpty(Edit.Note) ? null : Edit.Note,
+                priority = int.TryParse(Edit.Priority, out var p) ? p : (int?)null,
+            }
+        );
+        if (editResult.Succeeded)
+        {
+            Navigation.NavigateTo("/");
+        }
+    }
+
+    private async Task SetDueAsync()
+    {
+        dueResult = await Api.PutAsync(
+            $"/items/{Id}/due-date",
+            new { date = string.IsNullOrEmpty(Due.Date) ? null : Due.Date }
+        );
+        if (dueResult.Succeeded)
+        {
+            Navigation.NavigateTo($"/app/items/{Id}");
+        }
+    }
+
+    private async Task ToggleDoneAsync()
+    {
+        var result = await Api.PatchAsync($"/items/{Id}", new { done = Done.Value == "true" });
+        if (result.Succeeded)
+        {
+            Navigation.NavigateTo($"/app/items/{Id}");
+        }
+    }
+
+    public sealed class EditItemForm
+    {
+        public string? Title { get; set; }
+        public string? Note { get; set; }
+        public string? Priority { get; set; }
+    }
+
+    public sealed class DueDateForm
+    {
+        public string? Date { get; set; }
+    }
+
+    public sealed class DoneForm
+    {
+        public string? Value { get; set; }
+    }
+}

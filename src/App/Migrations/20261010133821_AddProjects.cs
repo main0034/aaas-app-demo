@@ -64,3 +64,4 @@ namespace App.Migrations
         }
     }
 }
+// probe: editing an applied migration must be refused

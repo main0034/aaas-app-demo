@@ -34,24 +34,33 @@
     }
     else
     {
-        <ul class="rows">
-            @foreach (var item in items)
-            {
-                <li>
-                    <span>
-                        <a href="/app/items/@item.Id">@item.Title</a>
-                        @if (item.IsDone)
-                        {
-                            <span class="muted"> - done</span>
-                        }
-                    </span>
-                    <span class="muted">
-                        @(item.Priority is { } p ? $"Priority {p}" : "")
-                        @(item.DueDate is { } d ? $" Due {d:yyyy-MM-dd}" : "")
-                    </span>
-                </li>
-            }
-        </ul>
+        <table>
+            <thead>
+                <tr>
+                    <th>Title</th>
+                    <th>Priority</th>
+                    <th>Due date</th>
+                    <th>Note</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in items)
+                {
+                    <tr>
+                        <td>
+                            <a href="/app/items/@item.Id">@item.Title</a>
+                            @if (item.IsDone)
+                            {
+                                <span class="muted"> - done</span>
+                            }
+                        </td>
+                        <td>@(item.Priority is { } p ? p.ToString() : "—")</td>
+                        <td>@(item.DueDate is { } d ? d.ToString("yyyy-MM-dd") : "—")</td>
+                        <td>@(item.Note is { } n ? (n.Length > 60 ? n[..60] + "…" : n) : "—")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
     }
 </div>
 

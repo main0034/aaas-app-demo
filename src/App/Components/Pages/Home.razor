@@ -1,0 +1,96 @@
+@page "/"
+@inject AppApi Api
+@inject NavigationManager Navigation
+
+<PageTitle>Items</PageTitle>
+
+<h1>Items</h1>
+
+<div class="card">
+    <EditForm Model="Input" FormName="new-item" OnSubmit="AddAsync" method="post">
+        <label for="title">Title</label>
+        <InputText id="title" @bind-Value="Input.Title" />
+        <label for="note">Note</label>
+        <InputTextArea id="note" @bind-Value="Input.Note" rows="2" />
+        <label for="priority">Priority</label>
+        <InputSelect id="priority" @bind-Value="Input.Priority">
+            <option value="">None</option>
+            @for (var p = 1; p <= 5; p++)
+            {
+                <option value="@p">@p@(p == 1 ? " (most important)" : "")</option>
+            }
+        </InputSelect>
+        <label for="due">Due date</label>
+        <InputText id="due" type="date" @bind-Value="Input.DueDate" />
+        <Errors Result="result" />
+        <button type="submit">Add item</button>
+    </EditForm>
+</div>
+
+<div class="card">
+    @if (items.Count == 0)
+    {
+        <p class="muted">Nothing here yet.</p>
+    }
+    else
+    {
+        <ul class="rows">
+            @foreach (var item in items)
+            {
+                <li>
+                    <span>
+                        <a href="/app/items/@item.Id">@item.Title</a>
+                        @if (item.IsDone)
+                        {
+                            <span class="muted"> - done</span>
+                        }
+                    </span>
+                    <span class="muted">
+                        @(item.Priority is { } p ? $"Priority {p}" : "")
+                        @(item.DueDate is { } d ? $" Due {d:yyyy-MM-dd}" : "")
+                    </span>
+                </li>
+            }
+        </ul>
+    }
+</div>
+
+@code {
+    [SupplyParameterFromForm]
+    private NewItemForm Input { get; set; } = null!;
+
+    private List<Item> items = [];
+    private ApiResult? result;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+        items = await Api.GetAsync<List<Item>>("/items");
+    }
+
+    private async Task AddAsync()
+    {
+        result = await Api.PostAsync(
+            "/items",
+            new
+            {
+                title = Input.Title,
+                note = Input.Note,
+                priority = int.TryParse(Input.Priority, out var p) ? p : (int?)null,
+                dueDate = string.IsNullOrEmpty(Input.DueDate) ? null : Input.DueDate,
+            }
+        );
+        if (result.Succeeded)
+        {
+            Navigation.NavigateTo("/");
+        }
+    }
+
+    public sealed class NewItemForm
+    {
+        public string? Title { get; set; }
+        public string? Note { get; set; }
+        public string? Priority { get; set; }
+        public string? DueDate { get; set; }
+    }
+}

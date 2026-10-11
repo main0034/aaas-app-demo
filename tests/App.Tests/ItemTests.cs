@@ -25,4 +25,52 @@ public sealed class ItemTests(WebApplicationFactory<Program> factory)
         // Assert
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
+
+    [Fact]
+    public async Task Edit_rejects_blank_title()
+    {
+        // Act
+        var response = await _client.PutAsJsonAsync("/items/1", new { title = "   " }, Ct);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Edit_rejects_missing_title()
+    {
+        // Act
+        var response = await _client.PutAsJsonAsync("/items/1", new { }, Ct);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Edit_rejects_priority_out_of_range()
+    {
+        // Act
+        var response = await _client.PutAsJsonAsync(
+            "/items/1",
+            new { title = "valid", priority = 6 },
+            Ct
+        );
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Edit_rejects_note_over_2000_characters()
+    {
+        // Act
+        var response = await _client.PutAsJsonAsync(
+            "/items/1",
+            new { title = "valid", note = new string('x', 2001) },
+            Ct
+        );
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
 }

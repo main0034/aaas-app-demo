@@ -306,6 +306,30 @@ app.MapPatch(
     }
 );
 
+app.MapPut(
+    "/items/{id:int}",
+    async (int id, ItemEditIn input, AppDbContext ctx, CancellationToken ct) =>
+    {
+        var trimmedTitle = input.Title.Trim();
+        if (trimmedTitle.Length == 0 || trimmedTitle.Length > 200)
+        {
+            return Results.BadRequest();
+        }
+
+        var item = await ctx.Items.FindAsync([id], ct);
+        if (item is null)
+        {
+            return Results.NotFound();
+        }
+
+        item.Title = trimmedTitle;
+        item.Note = input.Note;
+        item.Priority = input.Priority;
+        await ctx.SaveChangesAsync(ct);
+        return Results.Ok(item);
+    }
+);
+
 app.MapProjectsEndpoints();
 
 await app.RunAsync();
@@ -319,6 +343,12 @@ public sealed record ItemIn(
 );
 
 public sealed record DueDateIn(DateOnly? Date);
+
+public sealed record ItemEditIn(
+    [property: Required] string Title,
+    [property: StringLength(2000)] string? Note = null,
+    [property: Range(1, 5)] int? Priority = null
+);
 
 public sealed record ItemPatchIn([property: Required] bool? Done);
 

@@ -1,3 +1,4 @@
+using System.Net.Http.Json;
 using App.Components.Pages;
 using App.Data;
 using App.Tests.Postgres;
@@ -104,5 +105,41 @@ public sealed class HomePageTests(TemplateDatabase template) : PageTest(template
         // Assert
         Assert.Contains("…", html);
         Assert.DoesNotContain("in total", html);
+    }
+
+    [Fact]
+    public async Task An_item_added_without_a_note_shows_a_dash_and_stores_no_note()
+    {
+        // Act: the form's note field is submitted empty, as a browser sends it
+        var html = await SubmitFormAsync<Home>(
+            "/",
+            "new-item",
+            ("Input.Title", "No note"),
+            ("Input.Note", "")
+        );
+        var items = await Client.GetFromJsonAsync<List<Item>>("/items", Ct);
+
+        // Assert
+        Assert.Null(items!.Single().Note);
+        Assert.Matches(
+            "No note</a>.*?</td>.*?<td>.*?</td>.*?<td>.*?</td>.*?<td>\\s*—\\s*</td>",
+            html.Replace("\n", " ")
+        );
+    }
+
+    [Fact]
+    public async Task A_blank_stored_note_shows_a_dash()
+    {
+        // Arrange: a note of spaces, which an older version of the form could store
+        await SeedAsync(new Item { Title = "Blank note", Note = "   " });
+
+        // Act
+        var html = await GetPageAsync<Home>("/");
+
+        // Assert
+        Assert.Matches(
+            "Blank note</a>.*?</td>.*?<td>.*?</td>.*?<td>.*?</td>.*?<td>\\s*—\\s*</td>",
+            html.Replace("\n", " ")
+        );
     }
 }

@@ -56,7 +56,7 @@
                         </td>
                         <td>@(item.Priority is { } p ? p.ToString() : "—")</td>
                         <td>@(item.DueDate is { } d ? d.ToString("yyyy-MM-dd") : "—")</td>
-                        <td>@(item.Note is { } n ? (n.Length > 60 ? n[..60] + "…" : n) : "—")</td>
+                        <td>@(!string.IsNullOrWhiteSpace(item.Note) && item.Note is { } n ? (n.Length > 60 ? n[..60] + "…" : n) : "—")</td>
                     </tr>
                 }
             </tbody>
@@ -84,7 +84,7 @@
             new
             {
                 title = Input.Title,
-                note = Input.Note,
+                note = string.IsNullOrWhiteSpace(Input.Note) ? null : Input.Note,
                 priority = int.TryParse(Input.Priority, out var p) ? p : (int?)null,
                 dueDate = string.IsNullOrEmpty(Input.DueDate) ? null : Input.DueDate,
             }

@@ -311,7 +311,7 @@ app.MapPut(
     async (int id, ItemEditIn input, AppDbContext ctx, CancellationToken ct) =>
     {
         var trimmedTitle = input.Title.Trim();
-        if (trimmedTitle.Length == 0)
+        if (trimmedTitle.Length == 0 || trimmedTitle.Length > 200)
         {
             return Results.BadRequest();
         }
@@ -345,7 +345,7 @@ public sealed record ItemIn(
 public sealed record DueDateIn(DateOnly? Date);
 
 public sealed record ItemEditIn(
-    [property: Required, StringLength(200, MinimumLength = 1)] string Title,
+    [property: Required] string Title,
     [property: StringLength(2000)] string? Note = null,
     [property: Range(1, 5)] int? Priority = null
 );
